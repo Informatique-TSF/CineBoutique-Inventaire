@@ -16,7 +16,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
 
     <!-- Data -->
-    <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="8.0.2" />
+    <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="9.0.0" />
     <PackageVersion Include="CsvHelper" Version="30.0.1" />
     <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="Npgsql" Version="8.0.3" />
