@@ -5,7 +5,7 @@
 
   <ItemGroup>
     <!-- Azure SDK (aligner avec l’API et les tests) -->
-    <PackageVersion Include="Azure.Core" Version="1.38.0" />
+    <PackageVersion Include="Azure.Core" Version="1.59.0" />
 
     <!-- Logging -->
     <PackageVersion Include="Serilog" Version="3.1.1" />
