@@ -65,7 +65,7 @@
     "vite": "^7.1.12",
     "vite-plugin-pwa": "^1.1.0",
     "vitest": "^3.2.4",
-    "workbox-build": "^7.3.0"
+    "workbox-build": "^7.4.1"
   },
   "overrides": {
     "sourcemap-codec": "npm:@jridgewell/sourcemap-codec@^1.5.0"
