@@ -30,7 +30,7 @@
     "clsx": "^2.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router-dom": "^7.9.4",
+    "react-router-dom": "^7.18.0",
     "react-swipeable": "^7.0.2",
     "react-window": "1.8.11",
     "zod": "^4.1.12"
