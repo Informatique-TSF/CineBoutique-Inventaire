@@ -210,7 +210,7 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
             pendingSnapshotUserId: null,
             logs: prependLogEntry(prev.logs, {
               type: 'item-rescanned',
-              message: `${updated.product.name} relu (EAN ${updated.product.ean})  quantit� ${updated.quantity}`,
+              message: `${updated.product.name} relu (EAN ${updated.product.ean})  quantité ${updated.quantity}`,
               context: {
                 ean: updated.product.ean,
                 productName: updated.product.name,
@@ -235,7 +235,7 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
           pendingSnapshotUserId: null,
           logs: prependLogEntry(prev.logs, {
             type: 'item-added',
-            message: `${product.name} ${options?.isManual ? 'ajout� manuellement' : 'ajout� � la session'} (EAN ${product.ean})`,
+            message: `${product.name} ${options?.isManual ? 'ajouté manuellement' : 'ajouté à la session'} (EAN ${product.ean})`,
             context: {
               ean: product.ean,
               productName: product.name,

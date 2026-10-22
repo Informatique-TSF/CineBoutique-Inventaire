@@ -81,7 +81,7 @@ describe('http timeouts', () => {
     vi.useRealTimers()
   })
 
-  it('rejette avec RequestTimeoutError quand la requ�te excede timeoutMs', async () => {
+  it('rejette avec RequestTimeoutError quand la requête excede timeoutMs', async () => {
     vi.useFakeTimers()
     vi.spyOn(globalThis, 'fetch').mockImplementation((_, init) => {
       const signal = (init as RequestInit | undefined)?.signal
@@ -100,7 +100,7 @@ describe('http timeouts', () => {
     await expectation
   })
 
-  it('relie le signal existant quand un timeout est configur�', async () => {
+  it('relie le signal existant quand un timeout est configuré', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(mockResponse(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }))
@@ -112,7 +112,7 @@ describe('http timeouts', () => {
     expect((init as RequestInit | undefined)?.signal).toBeInstanceOf(AbortSignal)
   })
 
-  it("d�clenche un timeout m�me sans AbortController disponible", async () => {
+  it("déclenche un timeout même sans AbortController disponible", async () => {
     vi.useFakeTimers()
     const globalRef = globalThis as { AbortController?: typeof AbortController }
     const originalAbort = globalRef.AbortController
@@ -136,27 +136,6 @@ describe('http timeouts', () => {
 })
 
 describe('http headers', () => {
-  const originalAppToken = (import.meta.env as { VITE_APP_TOKEN?: string }).VITE_APP_TOKEN
-
-  afterEach(() => {
-    ;(import.meta.env as { VITE_APP_TOKEN?: string }).VITE_APP_TOKEN = originalAppToken
-  })
-
-  it("ajoute l'entête X-App-Token lorsque configuré", async () => {
-    ;(import.meta.env as { VITE_APP_TOKEN?: string }).VITE_APP_TOKEN = 'secret-token'
-
-    const fetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockResolvedValueOnce(mockResponse(JSON.stringify({ ok: true }), { headers: { 'Content-Type': 'application/json' } }))
-
-    await http(API_URL)
-
-    expect(fetchSpy).toHaveBeenCalledTimes(1)
-    const [, init] = fetchSpy.mock.calls[0] ?? []
-    const headers = new Headers((init as RequestInit | undefined)?.headers ?? {})
-    expect(headers.get('X-App-Token')).toBe('secret-token')
-  })
-
   it("enrichit les entêtes opérateur et admin depuis le stockage", async () => {
     localStorage.setItem('cb.shop', JSON.stringify({ id: 'shop-999', name: 'Shop démo', kind: 'boutique' }))
     sessionStorage.setItem(

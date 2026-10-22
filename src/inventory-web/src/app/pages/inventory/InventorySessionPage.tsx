@@ -305,7 +305,7 @@ export const InventorySessionPage = () => {
       const normalized = message.trim().toLowerCase()
       const isLookupMessage = normalized.startsWith('recherche du code')
       const containsProductAddition =
-        normalized.includes('ajout�') || normalized.includes('ajout�e')
+        normalized.includes('ajouté') || normalized.includes('ajoutée')
       if (!isLookupMessage && !containsProductAddition) {
         logEvent({
           type: 'status',
@@ -765,7 +765,7 @@ export const InventorySessionPage = () => {
         try {
           await ensureActiveRun()
         } catch (error) {
-          const message = resolveLifecycleErrorMessage(error, 'Impossible de d�marrer le comptage.')
+          const message = resolveLifecycleErrorMessage(error, 'Impossible de démarrer le comptage.')
           updateStatus(null)
           setErrorMessage(message)
           return null
