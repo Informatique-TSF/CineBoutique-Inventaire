@@ -26,6 +26,8 @@ import {
   RequestTimeoutError,
   type HttpError,
 } from "@/lib/api/http";
+import { decodeBarcodeFromFile } from "@/lib/scan/barcodeDetector";
+import { describeCameraError } from "@/lib/scan/cameraErrors";
 import { useShop } from "@/state/ShopContext";
 
 const MAX_SCAN_LENGTH = 32;
@@ -37,24 +39,6 @@ const sanitizeScanValue = (value: string) => value.replace(/[\r\n\t]+/g, "");
 
 const isScanLengthValid = (code: string) =>
   code.length > 0 && code.length <= MAX_SCAN_LENGTH;
-
-const formatCameraError = (error: unknown) => {
-  if (error instanceof Error) {
-    return error.message || error.name;
-  }
-  if (
-    error &&
-    typeof error === "object" &&
-    "name" in error &&
-    typeof (error as { name?: unknown }).name === "string"
-  ) {
-    const { name } = error as { name?: string };
-    if (name) {
-      return name;
-    }
-  }
-  return String(error);
-};
 
 type StatusTone = "info" | "success" | "warning";
 
@@ -116,14 +100,9 @@ export const ScanCameraPage = () => {
   const triggerScanRejectionFeedback = useScanRejectionFeedback();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const torchControllerRef = useRef<TorchController | null>(null);
+  // Les contraintes (1080p, mise au point continue, zoom) sont gérées par le hook.
   const cameraOptions = useMemo<CameraOptions>(
-    () => ({
-      autoResumeOnVisible: false,
-      constraints: {
-        video: { facingMode: { ideal: "environment" } },
-        audio: false,
-      },
-    }),
+    () => ({ autoResumeOnVisible: false }),
     []
   );
 
@@ -132,7 +111,10 @@ export const ScanCameraPage = () => {
     error: cameraError,
     stop: stopCamera,
     start: startCamera,
+    canSwitchCamera,
+    switchCamera,
   } = useCamera(videoRef, cameraOptions);
+  const [photoDecoding, setPhotoDecoding] = useState(false);
 
   const shopName = shop?.name ?? "Boutique";
   const ownerUserId = selectedUser?.id?.trim() ?? "";
@@ -545,8 +527,8 @@ export const ScanCameraPage = () => {
 
   const orderedItems = items;
 
-  const cameraErrorLabel = useMemo(
-    () => (cameraError ? formatCameraError(cameraError) : null),
+  const cameraErrorDescription = useMemo(
+    () => (cameraError ? describeCameraError(cameraError) : null),
     [cameraError]
   );
 
@@ -791,6 +773,47 @@ export const ScanCameraPage = () => {
       triggerScanRejectionFeedback,
     ]
   );
+  const handlePickImage = useCallback(
+    async (file: File) => {
+      if (photoDecoding) {
+        return;
+      }
+      setPhotoDecoding(true);
+      setErrorMessage(null);
+      showStatusMessage("Analyse de la photo…");
+      try {
+        const value = await decodeBarcodeFromFile(file);
+        if (!value) {
+          showStatusMessage(null);
+          setErrorMessage(
+            "Aucun code-barres lisible sur la photo. Rapprochez-vous et réessayez."
+          );
+          triggerScanRejectionFeedback();
+          return;
+        }
+        armScanLock(null);
+        await handleDetected(value);
+      } catch {
+        showStatusMessage(null);
+        setErrorMessage("Lecture de la photo impossible. Réessayez.");
+      } finally {
+        setPhotoDecoding(false);
+      }
+    },
+    [
+      armScanLock,
+      handleDetected,
+      photoDecoding,
+      showStatusMessage,
+      triggerScanRejectionFeedback,
+    ]
+  );
+
+  const handleSwitchCamera = useCallback(() => {
+    void torchControllerRef.current?.set(false);
+    void switchCamera();
+  }, [switchCamera]);
+
   const handleGoBack = useCallback(() => {
     if (pendingScanControllerRef.current) {
       scanTokenRef.current += 1;
@@ -873,6 +896,7 @@ export const ScanCameraPage = () => {
         <BarcodeScanner
           active={cameraActive}
           onDetected={handleDetected}
+          onPickImage={handlePickImage}
           presentation="immersive"
           enableTorchToggle
           onTorchStateChange={handleTorchStateChange}
@@ -895,6 +919,21 @@ export const ScanCameraPage = () => {
             </span>
             Retour
           </button>
+          <div className="flex items-center gap-2">
+            {canSwitchCamera && (
+              <button
+                type="button"
+                className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={handleSwitchCamera}
+                aria-label="Changer de caméra"
+                title="Changer de caméra"
+                disabled={!cameraActive}
+                data-testid="scan-camera-switch"
+              >
+                <span aria-hidden className="text-sm">⟲</span>
+                Caméra
+              </button>
+            )}
           {torchState.supported && (
             <button
               type="button"
@@ -919,6 +958,7 @@ export const ScanCameraPage = () => {
               Lampe
             </button>
           )}
+          </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center px-6">
           {!cameraActive && !cameraError && !hasCameraBooted && (
@@ -931,12 +971,27 @@ export const ScanCameraPage = () => {
               Caméra en pause
             </span>
           )}
-          {cameraError && (
-            <span className="rounded-full bg-black/70 px-3 py-1 text-sm font-semibold text-rose-200 shadow-lg backdrop-blur">
-              Caméra indisponible : {cameraErrorLabel ?? "Erreur inconnue"}
-            </span>
-          )}
         </div>
+        {cameraErrorDescription && (
+          <div
+            className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-8"
+            data-testid="scan-camera-error"
+          >
+            <div className="max-w-sm rounded-3xl bg-black/70 px-5 py-4 text-center shadow-lg backdrop-blur">
+              <p className="text-sm font-semibold text-rose-200">
+                Caméra indisponible
+              </p>
+              <p className="mt-1 text-sm text-white">
+                {cameraErrorDescription.message}
+              </p>
+              {cameraErrorDescription.technical && (
+                <p className="mt-2 text-[11px] text-white/60">
+                  {cameraErrorDescription.technical}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       <div
         className="flex min-h-0 flex-1 flex-col rounded-t-4xl bg-white text-slate-900 shadow-[0_-20px_48px_-32px_rgba(15,23,42,0.55)] transition-colors duration-300 dark:bg-slate-950 dark:text-white"

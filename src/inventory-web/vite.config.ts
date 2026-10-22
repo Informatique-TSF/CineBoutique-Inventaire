@@ -37,7 +37,7 @@ export default defineConfig(({ command }) => {
           navigateFallback: "/index.html",
           navigationPreload: true,
           inlineWorkboxRuntime: true,
-          globPatterns: ["**/*.{html,js,css,svg,png,ico,webmanifest,woff2}"],
+          globPatterns: ["**/*.{html,js,css,svg,png,ico,webmanifest,woff2,wasm}"],
           runtimeCaching: [
             {
               urlPattern: ({ request }) => request.mode === "navigate",
