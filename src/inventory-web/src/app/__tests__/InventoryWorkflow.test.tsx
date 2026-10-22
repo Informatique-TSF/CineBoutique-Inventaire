@@ -299,6 +299,8 @@ const renderInventoryRoutes = (initialEntry: string, options?: RenderInventoryOp
 
 describe("Workflow d'inventaire", () => {
   beforeEach(() => {
+    // Isole chaque test du brouillon de comptage persisté par InventoryProvider.
+    localStorage.clear()
     localStorage.setItem('cb.shop', JSON.stringify(testShop))
     sessionStorage.clear()
     sessionStorage.setItem(

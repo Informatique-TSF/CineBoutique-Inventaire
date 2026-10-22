@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 
 import {
   completeInventoryRun,
+  fetchLocations,
   fetchProductByEan,
   getConflictZoneDetail,
   releaseInventoryRun,
@@ -17,7 +18,14 @@ import { LoadingIndicator } from '../../components/LoadingIndicator'
 import { Button } from '../../components/ui/Button'
 import { Input } from '../../components/ui/Input'
 import { useInventory } from '../../contexts/InventoryContext'
-import type { ConflictRunHeader, ConflictZoneDetail, ConflictZoneItem, InventoryItem, Product } from '../../types/inventory'
+import type {
+  ConflictRunHeader,
+  ConflictZoneDetail,
+  ConflictZoneItem,
+  InventoryItem,
+  Location,
+  Product,
+} from '../../types/inventory'
 import { CountType } from '../../types/inventory'
 
 import { ProductsModal, type ProductsModalItem } from '@/components/products/ProductsModal'
@@ -141,6 +149,45 @@ type InlineConflictSummary = { runs: InlineConflictRunSummary[] }
 
 type StatusTone = 'info' | 'warning'
 
+/**
+ * État de la vérification du run serveur après restauration d'un brouillon local :
+ * - idle / checking : pas encore vérifié / vérification en cours
+ * - active : le run serveur est toujours ouvert, on continue dessus
+ * - no-run : lignes restaurées sans run serveur (rien à vérifier)
+ * - missing : le run serveur n'existe plus, les lignes sont conservées localement
+ * - restarted : un nouveau run a été ouvert à la demande de l'utilisateur
+ * - unavailable : impossible de joindre le serveur pour vérifier
+ */
+type ResumeCheckState = 'idle' | 'checking' | 'active' | 'no-run' | 'missing' | 'restarted' | 'unavailable'
+
+const RUN_RESTORED_TIME_FORMATTER = new Intl.DateTimeFormat('fr-FR', {
+  dateStyle: 'short',
+  timeStyle: 'short',
+})
+
+const formatRestoredAt = (value: string): string | null => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+  return RUN_RESTORED_TIME_FORMATTER.format(date)
+}
+
+const formatRestoredLines = (count: number): string => `${count} ligne${count > 1 ? 's' : ''}`
+
+const isRunStillOpen = (locations: Location[], locationId: string, runId: string): boolean => {
+  const match = locations.find((candidate) => candidate.id === locationId)
+  if (!match) {
+    return false
+  }
+
+  if (match.activeRunId === runId) {
+    return true
+  }
+
+  return match.countStatuses.some((status) => status.runId === runId && status.status === 'in_progress')
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 export const aggregateItemsForCompletion = (
   items: InventoryItem[],
@@ -259,8 +306,10 @@ export const InventorySessionPage = () => {
     clearSession,
     logs,
     logEvent,
+    restoredDraft,
+    dismissRestoredDraft,
   } = useInventory()
-  const { shop } = useShop()
+  const { shop, isLoaded: isShopLoaded } = useShop()
   const triggerScanRejectionFeedback = useScanRejectionFeedback()
   const triggerDuplicateFeedback = useScanDuplicateFeedback()
   const [status, setStatusState] = useState<{ text: string; tone: StatusTone } | null>(null)
@@ -289,6 +338,9 @@ export const InventorySessionPage = () => {
   const [isConflictPanelOpen, setConflictPanelOpen] = useState(false)
   const [catalogueOpen, setCatalogueOpen] = useState(false)
   const [pendingRemovalItem, setPendingRemovalItem] = useState<InventoryItem | null>(null)
+  const [resumeCheck, setResumeCheck] = useState<ResumeCheckState>('idle')
+  const [restartingRun, setRestartingRun] = useState(false)
+  const resumeCheckStartedRef = useRef(false)
 
   const isConflictResolutionMode = typeof countType === 'number' && countType >= CountType.Count3
   const canDisplayScanInputs =
@@ -628,6 +680,56 @@ export const InventorySessionPage = () => {
     }
   }, [countType, locationId, navigate, selectedUser])
 
+  // Après restauration d'un brouillon local : vérifie une seule fois que le run serveur est toujours ouvert.
+  useEffect(() => {
+    if (!restoredDraft || !isShopLoaded || resumeCheckStartedRef.current) {
+      return
+    }
+
+    resumeCheckStartedRef.current = true
+
+    if (!existingRunId) {
+      setResumeCheck('no-run')
+      return
+    }
+
+    if (!shopId || !locationId) {
+      setResumeCheck('unavailable')
+      return
+    }
+
+    let cancelled = false
+    setResumeCheck('checking')
+
+    void (async () => {
+      try {
+        const locations = await fetchLocations(shopId, { includeDisabled: true })
+        if (cancelled) {
+          return
+        }
+
+        if (isRunStillOpen(locations, locationId, existingRunId)) {
+          setResumeCheck('active')
+          return
+        }
+
+        // Le run n'existe plus côté serveur : on garde les lignes, on oublie seulement l'identifiant du run.
+        setSessionId(null)
+        setResumeCheck('missing')
+      } catch (error) {
+        if (cancelled) {
+          return
+        }
+        console.warn('[inventory] vérification du comptage restauré impossible', error)
+        setResumeCheck('unavailable')
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [existingRunId, isShopLoaded, locationId, restoredDraft, setSessionId, shopId])
+
   const handleRetryConflictPrefill = useCallback(() => {
     setConflictDetail(null)
     setConflictPrefillAttempt((attempt) => attempt + 1)
@@ -758,6 +860,24 @@ export const InventorySessionPage = () => {
     setSessionId,
     shopId,
   ])
+
+  const handleRestartRun = useCallback(async () => {
+    setRestartingRun(true)
+    setErrorMessage(null)
+    try {
+      const runId = await ensureActiveRun()
+      if (runId) {
+        setResumeCheck('restarted')
+        updateStatus('Comptage rouvert sur le serveur, vous pouvez continuer.')
+      } else {
+        setErrorMessage('Impossible de rouvrir le comptage : le serveur n’a pas renvoyé d’identifiant.')
+      }
+    } catch (error) {
+      setErrorMessage(resolveLifecycleErrorMessage(error, 'Impossible de rouvrir le comptage.'))
+    } finally {
+      setRestartingRun(false)
+    }
+  }, [ensureActiveRun, updateStatus])
 
   const addProductToSession = useCallback(
     async (product: Product, options?: { isManual?: boolean }) => {
@@ -1112,6 +1232,18 @@ export const InventorySessionPage = () => {
       }
     } catch (error) {
       updateStatus(null)
+      const httpStatus = (error as { status?: unknown } | null)?.status
+      if (httpStatus === 404 && existingRunId) {
+        // Le run référencé n'existe plus (clôturé, libéré ou réinitialisé ailleurs) :
+        // on conserve les lignes et on détache l'identifiant pour permettre un nouvel envoi.
+        setSessionId(null)
+        setErrorMessage(
+          `Le comptage côté serveur n’existe plus (il a été clôturé ou libéré). Vos ${formatRestoredLines(
+            items.length,
+          )} sont conservées sur cet appareil : relancez « Terminer ce comptage » pour les enregistrer dans un nouveau comptage.`,
+        )
+        return
+      }
       const message =
         error instanceof Error && error.message.trim().length > 0
           ? error.message
@@ -1130,6 +1262,7 @@ export const InventorySessionPage = () => {
     locationId,
     navigate,
     ownerUserId,
+    setSessionId,
     shopId,
     updateStatus,
   ])
@@ -1412,6 +1545,98 @@ export const InventorySessionPage = () => {
     !completionLoading &&
     (!isConflictResolutionMode || conflictPrefillStatus === 'loaded')
 
+  const resumeBanner = useMemo(() => {
+    if (!restoredDraft) {
+      return null
+    }
+
+    const restoredAtLabel = formatRestoredAt(restoredDraft.savedAt)
+    const restoredSummary = `${formatRestoredLines(restoredDraft.itemCount)} restaurée${
+      restoredDraft.itemCount > 1 ? 's' : ''
+    }${restoredAtLabel ? ` (sauvegarde du ${restoredAtLabel})` : ''}.`
+
+    let title = 'Comptage restauré depuis cet appareil'
+    let body: string
+    let tone: 'info' | 'warning' | 'success' = 'info'
+
+    switch (resumeCheck) {
+      case 'active':
+        body = `${restoredSummary} Le comptage côté serveur est toujours ouvert, vous pouvez continuer.`
+        break
+      case 'no-run':
+        body = `${restoredSummary} Vous pouvez continuer.`
+        break
+      case 'missing':
+        title = 'Le comptage côté serveur n’existe plus'
+        tone = 'warning'
+        body = `Il a été clôturé ou libéré depuis un autre appareil. Vos ${formatRestoredLines(
+          items.length,
+        )} ont été conservées sur cet appareil : reprenez le comptage pour les enregistrer (un nouveau comptage sera ouvert sur cette zone).`
+        break
+      case 'restarted':
+        title = 'Comptage rouvert'
+        tone = 'success'
+        body = `Un nouveau comptage a été ouvert sur le serveur avec vos ${formatRestoredLines(
+          items.length,
+        )}. Vous pouvez continuer.`
+        break
+      case 'unavailable':
+        body = `${restoredSummary} Impossible de vérifier l’état du comptage côté serveur pour le moment ; vous pouvez continuer.`
+        break
+      case 'checking':
+      case 'idle':
+      default:
+        body = `${restoredSummary} Vérification du comptage côté serveur…`
+        break
+    }
+
+    const toneClassName =
+      tone === 'warning'
+        ? 'border-amber-300/80 bg-amber-50/80 text-amber-900 dark:border-amber-400/40 dark:bg-amber-500/10 dark:text-amber-100'
+        : tone === 'success'
+          ? 'border-emerald-300/80 bg-emerald-50/80 text-emerald-900 dark:border-emerald-400/40 dark:bg-emerald-500/10 dark:text-emerald-100'
+          : 'border-brand-200/80 bg-brand-50/80 text-brand-900 dark:border-brand-400/40 dark:bg-brand-500/10 dark:text-brand-100'
+
+    const isChecking = resumeCheck === 'checking' || resumeCheck === 'idle'
+
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        data-testid="resume-banner"
+        data-state={resumeCheck}
+        className={`space-y-2 rounded-2xl border p-3 text-sm ${toneClassName}`}
+      >
+        <p className="font-semibold">{title}</p>
+        <p>{body}</p>
+        {!isChecking && (
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {resumeCheck === 'missing' && (
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void handleRestartRun()}
+                disabled={restartingRun}
+                data-testid="btn-restart-run"
+              >
+                {restartingRun ? 'Réouverture…' : 'Reprendre le comptage'}
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={dismissRestoredDraft}
+              data-testid="btn-dismiss-resume"
+            >
+              Fermer
+            </Button>
+          </div>
+        )}
+      </div>
+    )
+  }, [dismissRestoredDraft, handleRestartRun, items.length, restartingRun, restoredDraft, resumeCheck])
+
   return (
     <div className="flex flex-col gap-6" data-testid="page-session" ref={pageRef}>
       <Card className="space-y-3 md:space-y-4">
@@ -1460,6 +1685,7 @@ export const InventorySessionPage = () => {
           )}
         </div>
       </div>
+        {resumeBanner}
         {isConflictResolutionMode && (
           <div className="space-y-2 rounded-2xl border border-rose-200/80 bg-rose-50/80 p-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">
             <div className="flex flex-wrap items-center gap-2">
