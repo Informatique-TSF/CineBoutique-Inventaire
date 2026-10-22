@@ -101,10 +101,6 @@ const sanitizeHeaderValue = (value: unknown): string | null => {
 export function buildHeaders(input?: HeadersInit): Headers {
   const headers = new Headers(input ?? {})
 
-  const appToken = sanitizeHeaderValue((import.meta.env as { VITE_APP_TOKEN?: unknown })?.VITE_APP_TOKEN ?? null)
-  if (appToken && !headers.has('X-App-Token')) {
-    headers.set('X-App-Token', appToken)
-  }
 
   const httpContext = getInventoryHttpContextSnapshot()
   const contextUser = httpContext.selectedUser ?? null

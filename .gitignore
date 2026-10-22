@@ -60,3 +60,6 @@ src/inventory-web/package-lock.json
 
 # server-local certs
 ssl/
+
+# Secrets de déploiement (jeton applicatif), voir secrets.env.example
+secrets.env

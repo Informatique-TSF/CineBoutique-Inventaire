@@ -133,6 +133,12 @@ var authenticationBuilder = builder.Services.AddAuthentication(options =>
 if (useAdminHeaderAuth)
 {
     var appToken = builder.Configuration["Authentication:AppToken"];
+    if (builder.Environment.IsProduction() && string.IsNullOrWhiteSpace(appToken))
+    {
+        throw new InvalidOperationException(
+            "Authentication:AppToken doit être défini en Production lorsque le schéma AdminHeader est actif (voir secrets.env.example).");
+    }
+
     authenticationBuilder.AddScheme<AdminHeaderAuthenticationOptions, AdminHeaderAuthenticationHandler>(
         AdminHeaderAuthenticationHandler.SchemeName,
         options => options.AppToken = appToken);
