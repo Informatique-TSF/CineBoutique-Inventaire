@@ -169,6 +169,8 @@ export default defineConfig(({ command }) => {
     },
     test: {
       environment: "jsdom",
+      // Suite sur un seul thread (poolOptions) : 5 s par défaut provoquait des échecs aléatoires sous charge.
+      testTimeout: 15000,
       setupFiles: ["./setupTests.ts"],
       exclude: [...configDefaults.exclude, "tests/e2e/**"],
       coverage: {
