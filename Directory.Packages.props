@@ -1,6 +1,8 @@
 <Project>
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <!-- Épingle aussi les dépendances transitives (System.Text.Json, IdentityModel...) sur les versions ci-dessous -->
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +21,7 @@
     <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="8.0.2" />
     <PackageVersion Include="CsvHelper" Version="30.0.1" />
     <PackageVersion Include="Dapper" Version="2.1.66" />
-    <PackageVersion Include="Npgsql" Version="8.0.3" />
+    <PackageVersion Include="Npgsql" Version="8.0.9" />
     <PackageVersion Include="FluentValidation.AspNetCore" Version="11.3.1" />
 
     <!-- Migrations -->
@@ -27,18 +29,21 @@
     <PackageVersion Include="FluentMigrator.Runner.Postgres" Version="6.0.0" />
 
     <!-- Authentication -->
-    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.32" />
     <PackageVersion Include="BCrypt.Net-Next" Version="4.0.3" />
     <PackageVersion Include="Isopoh.Cryptography.Argon2" Version="2.0.0" />
 
     <!-- Documentation -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="8.0.8" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="8.0.32" />
     <PackageVersion Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-    <PackageVersion Include="Microsoft.OpenApi.Readers" Version="1.6.14" />
+    <PackageVersion Include="Microsoft.OpenApi.Readers" Version="1.6.31" />
 
     <!-- Observability -->
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.8.1" />
-    <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.13.1-beta.1" />
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.20.1" />
+    <PackageVersion Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" Version="1.20.1-beta.1" />
+
+    <!-- Transitifs épinglés pour fermer les avis de sécurité (GHSA-hh2w-p6rv-4g7w, GHSA-8g4q-xg66-9fp4) -->
+    <PackageVersion Include="System.Text.Json" Version="8.0.6" />
 
     <!-- Analyzers -->
     <PackageVersion Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="8.0.0" />
@@ -46,9 +51,9 @@
     <!-- Tests -->
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
-    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.8" />
-    <PackageVersion Include="Testcontainers" Version="3.8.0" />
-    <PackageVersion Include="Testcontainers.PostgreSql" Version="3.8.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.32" />
+    <PackageVersion Include="Testcontainers" Version="4.16.0" />
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
     <PackageVersion Include="Xunit.SkippableFact" Version="1.4.13" />
     <PackageVersion Include="FluentAssertions" Version="6.12.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
