@@ -1,0 +1,10 @@
+[Unit]
+Description=Déclenche la sauvegarde de la base chaque nuit à 02:30
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+Unit=inventaire-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,8 @@
+[Unit]
+Description=Sauvegarde quotidienne de la base CinéBoutique Inventaire
+
+[Service]
+Type=oneshot
+Environment=BACKUP_DIR=%h/backups/inventaire
+Environment=RETENTION_DAYS=14
+ExecStart=%h/apps/CineBoutique-Inventaire/scripts/deploy/backup_db.sh
