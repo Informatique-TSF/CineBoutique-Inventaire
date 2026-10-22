@@ -1,46 +1,27 @@
-import { registerSW } from "virtual:pwa-register";
+import { registerSW } from 'virtual:pwa-register'
 
-export const setupPwa = () => {
-  let registration: ServiceWorkerRegistration | undefined;
+import { createPwaUpdateController, type PwaUpdateController } from './pwaUpdateController'
 
-  const requestUpdate = () => {
-    if (registration) return registration.update();
-    if (!("serviceWorker" in navigator)) return;
+let controller: PwaUpdateController | null = null
 
-    return navigator.serviceWorker.getRegistration().then((reg) => {
-      if (reg) {
-        registration = reg;
-        return reg.update();
-      }
-    });
-  };
-
-  registerSW({
-    immediate: true,
-    onRegisteredSW(_url, reg) {
-      registration = reg;
-      requestUpdate();
-
-      if (reg) {
-        // Vérif périodique pour éviter que Safari iOS garde une version figée
-        setInterval(() => reg.update(), 30 * 60_000);
-      }
-    },
-  });
-
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === "visible") {
-      requestUpdate();
-    }
-  };
-
-  document.addEventListener("visibilitychange", handleVisibilityChange);
-  window.addEventListener("focus", requestUpdate);
-
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.addEventListener("controllerchange", () => {
-      // Laisse le nouveau SW prendre totalement le contrôle avant reload
-      setTimeout(() => window.location.reload(), 150);
-    });
+/**
+ * Enregistre le service worker en mode « prompt » : la nouvelle version est proposée
+ * via <UpdateToast /> et n'est appliquée (avec rechargement) qu'après confirmation.
+ */
+export const setupPwa = (): PwaUpdateController | null => {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return null
   }
-};
+
+  if (controller) {
+    return controller
+  }
+
+  controller = createPwaUpdateController({
+    registerSW,
+    serviceWorkerContainer: navigator.serviceWorker,
+    reload: () => window.location.reload(),
+  })
+
+  return controller
+}

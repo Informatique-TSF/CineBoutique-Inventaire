@@ -15,7 +15,9 @@ export default defineConfig(({ command }) => {
     plugins: [
       react(),
       VitePWA({
-        registerType: "autoUpdate",
+        // Mode « prompt » : la nouvelle version attend la confirmation de l'utilisateur
+        // (voir src/pwa/setupPwa.ts et UpdateToast) au lieu de recharger en plein comptage.
+        registerType: "prompt",
         includeAssets: [
           "apple-touch-icon.png",
           "apple-touch-icon-120.png",
@@ -26,8 +28,11 @@ export default defineConfig(({ command }) => {
           "icons/pwa-icon.png",
         ],
         workbox: {
+          // clientsClaim reste actif pour que le SW accepté prenne le contrôle (événement
+          // « controlling ») ; skipWaiting doit rester false en mode prompt, sinon le SW
+          // s'activerait seul et la page courante servirait des assets d'une autre version.
           clientsClaim: true,
-          skipWaiting: true,
+          skipWaiting: false,
           cleanupOutdatedCaches: true,
           navigateFallback: "/index.html",
           navigationPreload: true,

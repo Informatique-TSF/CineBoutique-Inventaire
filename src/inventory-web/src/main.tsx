@@ -6,6 +6,7 @@ import "./styles/util-classes.css";
 import { App } from "./App";
 import { initializeTheme } from "./app/utils/theme";
 import { setupPwa } from "./pwa/setupPwa";
+import { UpdateToast } from "./pwa/UpdateToast";
 import { ShopProvider } from "./state/ShopContext";
 
 initializeTheme();
@@ -21,5 +22,6 @@ root.render(
     <ShopProvider>
       <App />
     </ShopProvider>
+    <UpdateToast />
   </StrictMode>
 );

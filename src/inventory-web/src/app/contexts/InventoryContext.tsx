@@ -15,6 +15,7 @@ import {
   type InventoryDraftPayload,
   type InventoryDraftSnapshot,
 } from '@/lib/inventoryDraftStorage'
+import { pwaUpdateStore } from '@/pwa/updateStore'
 import type { ShopUser } from '@/types/user'
 
 export type InventoryItemMutationResult = {
@@ -229,6 +230,11 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
     pendingDraftFlushRef.current = null
     flush?.()
   }, [])
+
+  // Le bandeau de mise à jour PWA recommande « Plus tard » tant que des lignes sont en cours.
+  useEffect(() => {
+    pwaUpdateStore.setCountInProgress(state.items.length > 0)
+  }, [state.items.length])
 
   // Persistance locale (debounce) : chaque changement d'état replanifie une écriture.
   useEffect(() => {

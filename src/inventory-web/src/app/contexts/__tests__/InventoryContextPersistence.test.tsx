@@ -6,6 +6,7 @@ import { InventoryProvider, useInventory } from '../InventoryContext'
 import type { Location, Product } from '@/app/types/inventory'
 import { buildInventoryDraftKey } from '@/lib/inventoryDraftStorage'
 import { SHOP_STORAGE_KEY } from '@/lib/shopStorage'
+import { pwaUpdateStore } from '@/pwa/updateStore'
 import type { Shop } from '@/types/shop'
 import type { ShopUser } from '@/types/user'
 
@@ -56,10 +57,30 @@ describe('InventoryProvider — persistance locale du comptage', () => {
   beforeEach(() => {
     localStorage.clear()
     localStorage.setItem(SHOP_STORAGE_KEY, JSON.stringify(shop))
+    pwaUpdateStore.reset()
   })
 
   afterEach(() => {
     localStorage.clear()
+    pwaUpdateStore.reset()
+  })
+
+  it('signale au store PWA qu’un comptage est en cours dès qu’il y a des lignes', () => {
+    const { result } = renderInventory()
+    expect(pwaUpdateStore.getSnapshot().countInProgress).toBe(false)
+
+    act(() => {
+      result.current.setSelectedUser(user)
+      result.current.setLocation(location)
+      result.current.setCountType(1)
+      result.current.addOrIncrementItem(products[0])
+    })
+    expect(pwaUpdateStore.getSnapshot().countInProgress).toBe(true)
+
+    act(() => {
+      result.current.clearSession()
+    })
+    expect(pwaUpdateStore.getSnapshot().countInProgress).toBe(false)
   })
 
   it('restaure les articles, la zone, le comptage et le run après un démontage/remontage du provider', () => {
