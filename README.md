@@ -14,7 +14,7 @@ Ce dépôt monorepo regroupe l'ensemble des composants nécessaires à la future
 - Auth : `Authentication:UseAdminHeader=true` pour le dev (entêtes `X-Admin: true` + `X-App-Token` optionnel). En production, désactivez-le et renseignez `Authentication:Authority` + `Authentication:Audience`.
 - Seeds/migrations : `APPLY_MIGRATIONS=true` et `AppSettings__SeedOnStartup=true` en dev. En production, `APPLY_MIGRATIONS` ponctuel lors des montées de version et `AppSettings__SeedOnStartup=false`.
 - CORS : ajouter vos origines via `AllowedOrigins__0=https://...`.
-- Front : `DEV_BACKEND_ORIGIN=http://localhost:8080` (proxy Vite), `VITE_API_BASE=/api` par défaut, `VITE_DISABLE_DEV_FIXTURES=true` pour désactiver les fixtures de secours.
+- Front : `DEV_BACKEND_ORIGIN=http://localhost:8080` (proxy Vite), `VITE_API_BASE=/api` par défaut.
 
 ### Démarrage local (sans Docker)
 ```bash
@@ -46,6 +46,7 @@ docker compose up --build
 - Front unitaire : `npm -w src/inventory-web run test`.
 - Front e2e (Playwright) : `npx playwright test` depuis `src/inventory-web` après `npm install` et `npx playwright install`.
 - Lint front : `npm -w src/inventory-web run lint`.
+- CI : tout ce qui précède est exécuté par `.github/workflows/ci.yml` ; un test .NET ignoré (base absente) ou un caractère mal encodé (U+FFFD) fait échouer la CI.
 
 ### Dépannage rapide
 - Migrations bloquées : vérifier `APPLY_MIGRATIONS`/`DISABLE_MIGRATIONS` et la connectivité Postgres.
@@ -66,7 +67,7 @@ docker compose up --build
 - `src/inventory-shared` : contrats et DTO partagés.
 - `src/inventory-web` : client PWA React (Vite + TypeScript).
 - `tests/*` : projets de tests automatisés associés.
-- `build/ci.yml` : pipeline GitHub Actions (à enrichir).
+- `.github/workflows/ci.yml` : pipeline GitHub Actions (restore verrouillé, build, tests .NET sur Postgres avec garde « aucun test ignoré », lint, typecheck, tests Vitest, build web, audits NuGet et npm).
 
 Chaque projet .NET cible .NET 8 et applique des analyzers configurés en avertissements bloquants.
 
@@ -76,7 +77,7 @@ Chaque projet .NET cible .NET 8 et applique des analyzers configurés en avertis
 | --- | --- | --- | --- | --- |
 | Développement (`dotnet` local) | Schéma `AdminHeader` (entête `X-Admin: true` pour obtenir le rôle admin). Une clé partagée optionnelle peut être définie via `Authentication:AppToken` et transmise dans `X-App-Token`. | Migrations FluentMigrator appliquées au démarrage, `InventoryDataSeeder` insère boutiques + zones si `AppSettings:SeedOnStartup=true` | Swagger (`/swagger`), diagnostics (`/api/_diag/*`) et métriques Prometheus (`/metrics`) accessibles sans jeton | Origines `http://localhost:5173` et `http://127.0.0.1:5173` autorisées |
 | Docker Compose | Identique au développement (`ASPNETCORE_ENVIRONMENT=Docker` est traité comme mode dev) | `APPLY_MIGRATIONS=true` et `AppSettings__SeedOnStartup=true` dans `docker-compose.yml` appliquent migrations + seed à chaque démarrage | Swagger exposé sur `http://localhost:8080/swagger`, `/metrics` anonyme, healthchecks prêts pour du monitoring | La PWA est servie via Nginx sur `http://localhost` |
-| Production | JWT Bearer (`Authentication:Authority` & `Authentication:Audience`) | Aucune migration automatique : lancer l'API avec `APPLY_MIGRATIONS=true` (et `DISABLE_MIGRATIONS=false`) lors d'une montée de version | Swagger désactivé; `/metrics` et `/api/_diag/*` nécessitent un rôle `Admin`; journaux Serilog + OpenTelemetry prêts à être collectés | Renseignez `AllowedOrigins` avec les domaines front |
+| Production | AdminHeader + jeton `Authentication__AppToken` obligatoire (posé par Nginx), ou JWT Bearer (`Authentication:Authority` & `Authentication:Audience`) | Avec `docker-compose.prod.yml`, `APPLY_MIGRATIONS=true` : les migrations s'appliquent à chaque démarrage de l'API | Swagger désactivé; `/metrics` et `/api/_diag/*` nécessitent un rôle `Admin`; journaux Serilog + OpenTelemetry prêts à être collectés | Renseignez `AllowedOrigins` avec les domaines front |
 
 Configurer systématiquement `ConnectionStrings__Default` (PostgreSQL). L'API s'appuie exclusivement sur FluentMigrator pour les évolutions de schéma : n'appliquez pas de scripts SQL manuels en dehors des migrations versionnées.
 
@@ -95,7 +96,7 @@ Configurer systématiquement `ConnectionStrings__Default` (PostgreSQL). L'API s'
 Par défaut, l'API utilise le schéma `AdminHeader` sur tous les environnements :
 
 - envoyer `X-Admin: true` accorde le rôle administrateur (sinon l'utilisateur est considéré comme non-admin mais tout de même authentifié) ;
-- si `Authentication:AppToken` est renseigné, chaque requête doit aussi véhiculer `X-App-Token: <valeur>` pour être acceptée (permet de restreindre l'accès au frontend maison) ;
+- si `Authentication:AppToken` est renseigné, chaque requête doit aussi véhiculer `X-App-Token: <valeur>` pour être acceptée (permet de restreindre l'accès au frontend maison). En production ce jeton est obligatoire (l'API refuse de démarrer sans) et c'est Nginx qui le pose sur les requêtes proxifiées (`secrets.env`, voir `docs/DEPLOY_VM.md`) : le navigateur ne le connaît jamais ;
 - pour revenir à un mode JWT classique, positionnez `Authentication:UseAdminHeader=false` et fournissez `Authentication:Authority` + `Authentication:Audience`. Les opérations protégées exigent alors un rôle `Admin` via la claim `role` ou `is_admin=true`.
 
 ```bash
@@ -110,7 +111,7 @@ Les seeds injectent toujours des comptes `ShopUser` avec un secret vide pour per
 
 ## CORS
 
-Deux politiques sont définies : `AllowDev` (en développement) autorise uniquement `http://localhost:5173` et `http://127.0.0.1:5173`. `PublicApi` lit la section `AllowedOrigins` ; si la liste est vide, toutes les origines sont acceptées (les méthodes restent limitées). Pour définir des domaines explicitement :
+Deux politiques sont définies : `AllowDev` (en développement) autorise uniquement `http://localhost:5173` et `http://127.0.0.1:5173`. `PublicApi` lit la section `AllowedOrigins` ; si la liste est vide, le code retombe sur les origines de développement (`http://localhost:5173`, `http://127.0.0.1:5173`), voir `Program.cs`. Pour définir des domaines explicitement :
 
 ```json
 "AllowedOrigins": [

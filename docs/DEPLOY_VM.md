@@ -1,93 +1,57 @@
-# Déploiement sur VM (branche `deploy` uniquement)
+# Déploiement sur VM (Debian, Docker Compose)
 
-## Pré-requis sur la VM (Debian)
-- Docker & Docker Compose Plugin installés
-- Git installé
-- Le repo cloné dans `~/apps/CineBoutique-Inventaire`
-- L’utilisateur courant membre du groupe `docker`
+## Pré-requis sur la VM
+- Docker et le plugin Docker Compose installés, utilisateur courant membre du groupe `docker`.
+- Git installé, dépôt cloné dans `~/apps/CineBoutique-Inventaire`.
+- Certificat TLS reconnu par les téléphones dans `./ssl/fullchain.pem` et `./ssl/privkey.pem` (voir `docs/DEMANDE_IT.md`). Sans certificat, le conteneur web génère un certificat auto-signé : utilisable pour tester, mais les téléphones refuseront la caméra.
+- Fichier `secrets.env` créé à partir de `secrets.env.example` (jeton applicatif, jamais versionné).
 
-## Premier setup
+## Fichiers Compose
+- `docker-compose.yml` : base (db, api, web).
+- `docker-compose.override.yml` : chargé automatiquement, **pour le développement** (publie l'API sur 8080 et la base sur 5432).
+- `docker-compose.prod.yml` : production. L'API n'est **pas** publiée sur l'hôte ; seul Nginx (80/443) l'est. Toujours le passer explicitement :
+
 ```bash
-mkdir -p ~/apps
-cd ~/apps
-git clone git@github.com:<org_ou_user>/CineBoutique-Inventaire.git
-cd CineBoutique-Inventaire
-git checkout deploy
+cd ~/apps/CineBoutique-Inventaire
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
 
-Script de déploiement
+Vérifications après déploiement :
 
-Le script suivant tire la branche deploy et relance l’app :
+```bash
+curl -k https://localhost/health                 # Nginx
+curl -k https://localhost/api/health             # API via Nginx (jeton posé par Nginx)
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/health   # doit échouer : port non publié
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+```
 
-chmod +x scripts/deploy/pull_and_rebuild.sh
-APP_DIR=~/apps/CineBoutique-Inventaire BRANCH=deploy ./scripts/deploy/pull_and_rebuild.sh
+## Jeton applicatif (X-App-Token)
+L'API refuse toute requête `/api/*` sans le jeton `Authentication__AppToken` et refuse de démarrer en Production s'il est absent. Nginx pose l'en-tête `X-App-Token` sur chaque requête proxifiée (variable `APP_TOKEN`, substituée au démarrage dans `nginx/templates/site.conf.template`). Le navigateur ne connaît jamais le jeton.
 
-Systemd (déploiement périodique)
+```bash
+cp secrets.env.example secrets.env
+token=$(openssl rand -hex 32)
+sed -i "s/^APP_TOKEN=.*/APP_TOKEN=$token/; s/^Authentication__AppToken=.*/Authentication__AppToken=$token/" secrets.env
+```
 
-Créer le service :
+## Mise à jour du code
+Le script `scripts/deploy/pull_and_rebuild.sh` fait un `git reset --hard` sur la branche `BRANCH` (défaut `deploy`) puis reconstruit les images. Le dépôt n'a pas encore de branche `deploy` : utiliser `BRANCH=main` ou créer la branche. Il n'existe pas de workflow GitHub qui alimente `deploy` automatiquement.
 
-~/.config/systemd/user/app-deploy.service
+```bash
+APP_DIR=~/apps/CineBoutique-Inventaire BRANCH=main ./scripts/deploy/pull_and_rebuild.sh
+```
 
+`secrets.env` et `ssl/` ne sont pas versionnés : le `reset --hard` ne les touche pas.
 
-Contenu :
+## Sauvegardes
+Sauvegarde quotidienne et procédure de restauration : voir `scripts/deploy/README.md` (`backup_db.sh`, `restore_db.sh`, minuteur systemd `inventaire-backup.timer`). Tester la restauration une fois avant l'inventaire.
 
-[Unit]
-Description=Pull & rebuild CineBoutique from deploy branch
+## Certificat et téléphones
+Les navigateurs n'ouvrent la caméra que sur un site HTTPS reconnu. Deux options, décrites dans `docs/DEMANDE_IT.md` :
+1. nom `inventaire.tsf.fr` + certificat Let's Encrypt par validation DNS (recommandé, rien à installer sur les téléphones) ;
+2. certificat de la PKI interne + racine déployée sur les téléphones par MDM (iPhone : « Réglages > Général > Informations > Réglages de confiance du certificat »).
 
-[Service]
-Type=oneshot
-Environment=APP_DIR=%h/apps/CineBoutique-Inventaire
-Environment=BRANCH=deploy
-ExecStart=%h/apps/CineBoutique-Inventaire/scripts/deploy/pull_and_rebuild.sh
+Renouvellement : remplacer les fichiers dans `./ssl/` puis `docker exec inventory-web nginx -s reload`.
 
-
-Créer le timer :
-
-~/.config/systemd/user/app-deploy.timer
-
-
-Contenu :
-
-[Unit]
-Description=Run deploy script every 2 minutes
-
-[Timer]
-OnBootSec=30sec
-OnUnitActiveSec=2min
-Unit=app-deploy.service
-
-[Install]
-WantedBy=default.target
-
-
-Activer côté utilisateur :
-
-systemctl --user daemon-reload
-systemctl --user enable --now app-deploy.timer
-systemctl --user list-timers | grep app-deploy
-
-
-Important : La VM suit uniquement la branche deploy.
-Le workflow GitHub met à jour deploy uniquement si la CI (backend & frontend) est verte sur main.
-
-## Proxy HTTPS (Caddy)
-
-Le service `proxy` (image Caddy) termine désormais TLS et route :
-
-- `/api` vers l’API .NET (service `api`)
-- toutes les autres routes vers le front nginx (service `web`)
-
-Deux modes sont possibles :
-
-1. **Domaine public** : définir les variables d’environnement `DOMAIN` (ex. `inventaire.mondomaine.fr`) et éventuellement `ACME_EMAIL` dans `docker-compose.yml` ou via `DOMAIN=... ACME_EMAIL=... docker compose up -d`. Caddy utilisera Let’s Encrypt automatiquement. Le port 80 redirige vers 443.
-2. **Certificat interne** : ne pas définir `DOMAIN` et déposer un couple `cert.pem` / `key.pem` dans `./certs`. Ils sont montés en lecture seule dans le conteneur. Caddy refusera de démarrer si les fichiers manquent.
-
-### Cas iPhone / iPad en réseau interne
-
-Les appareils iOS exigent un certificat approuvé pour exposer `navigator.mediaDevices`.
-
-1. Générez un certificat racine ou utilisez votre PKI interne pour créer `cert.pem` / `key.pem`.
-2. Copiez `cert.pem` sur l’iPhone (AirDrop, Mail…).
-3. Ouvrez le fichier sur iOS, installez le profil et activez-le dans **Réglages > Général > Informations > Réglages de confiance du certificat**.
-4. Ouvrez ensuite l’application via l’URL en `https://` pour débloquer la caméra.
-
-> Astuce : pour des tests rapides sans certificat, vous pouvez utiliser le fichier `src/inventory-web/.env.mobile` afin de pointer directement vers l’API en HTTP. Attention : le scan caméra ne fonctionnera pas, seul le fallback « import de photo » restera disponible.
+## Blue/green
+`docker-compose.green.yml` et `switch_api.sh` datent d'une version où l'API était publiée sur l'hôte ; ils ne sont plus fonctionnels en l'état (le bloc `/api/` de Nginx n'inclut pas `api_upstream.conf`). À reprendre si le besoin de bascule sans coupure se confirme.
