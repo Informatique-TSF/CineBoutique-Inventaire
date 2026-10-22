@@ -63,3 +63,6 @@ ssl/
 
 # Secrets de déploiement (jeton applicatif), voir secrets.env.example
 secrets.env
+
+# Résultats de tests locaux
+test-results/
