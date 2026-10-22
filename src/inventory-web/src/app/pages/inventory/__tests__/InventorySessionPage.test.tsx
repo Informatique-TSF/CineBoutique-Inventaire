@@ -31,6 +31,8 @@ afterAll(() => {
 
 afterEach(() => {
   cleanup()
+  // Isole chaque test du brouillon de comptage persisté par InventoryProvider.
+  localStorage.clear()
 })
 
 const owner: ShopUser = {
