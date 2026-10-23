@@ -185,7 +185,6 @@ export function BarcodeScanner({
     processingRef.current = false
     detectInFlightRef.current = false
     lastFrameAtRef.current = 0
-    restartLoopRef.current = null
   }, [stopLoop, stopWatchdog])
 
   useEffect(() => {
