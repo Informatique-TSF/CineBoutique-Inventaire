@@ -163,7 +163,7 @@ test.describe("Ordre d'affichage des articles scannés", () => {
 
     await expect(page).toHaveURL(/\/select-user/, { timeout: 5000 })
 
-    const identifyHeading = page.getByRole('heading', { name: 'Merci de vous identifier' })
+    const identifyHeading = page.getByRole('heading', { name: 'Choisir un utilisateur' })
     await expect(identifyHeading).toBeVisible({ timeout: 5000 })
 
     const userButton = page.getByRole('button', { name: mockUsers[0].displayName })
