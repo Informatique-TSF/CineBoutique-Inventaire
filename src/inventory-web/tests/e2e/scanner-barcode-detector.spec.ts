@@ -137,6 +137,9 @@ test.describe('Scanner avec BarcodeDetector', () => {
       })
 
       class FakeBarcodeDetector {
+        static async getSupportedFormats() {
+          return ['ean_13', 'ean_8', 'code_128', 'code_39', 'itf', 'qr_code']
+        }
         detect = async () => [{ rawValue: ean, format: 'ean_13' as const }]
       }
 
@@ -197,6 +200,18 @@ test.describe('Scanner avec BarcodeDetector', () => {
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify(mockUsers),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
+    await page.route('**/api/products/search**', async (route, request) => {
+      if (request.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([{ ean: simulatedEan, name: 'Produit simulé' }]),
         })
         return
       }

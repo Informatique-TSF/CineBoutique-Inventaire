@@ -142,6 +142,15 @@ test.describe("Ordre d'affichage des articles scannés", () => {
       }
 
       const url = new URL(request.url())
+      if (url.pathname.endsWith('/products/search')) {
+        const match = productsByEan[url.searchParams.get('code') ?? '']
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(match ? [match] : []),
+        })
+        return
+      }
       const ean = url.pathname.split('/').pop() ?? ''
       const product = productsByEan[ean]
 
