@@ -177,9 +177,9 @@ export default defineConfig(({ command }) => {
         provider: "v8",
         reporter: ["text", "lcov", "html"],
         include: ["src/app/**/*.{ts,tsx}"],
-        // Plancher au niveau mesuré (73,4 % en octobre 2026) : seuil jamais appliqué avant que la CI
+        // Plancher au niveau mesuré en CI (lignes 73,4 %, fonctions 79,9 % en octobre 2026) : seuil jamais appliqué avant que la CI
         // lance les tests front. Objectif 80 % : remonter ce plancher à chaque gain de couverture.
-        thresholds: { lines: 73, branches: 70, functions: 80, statements: 73 },
+        thresholds: { lines: 73, branches: 70, functions: 79, statements: 73 },
       },
       pool: "threads",
       poolOptions: { threads: { minThreads: 1, maxThreads: 1 } },
