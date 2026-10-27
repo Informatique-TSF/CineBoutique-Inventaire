@@ -77,8 +77,13 @@ describe('SelectShopPage', () => {
       </ThemeProvider>,
     )
 
-    const entityRadio = await screen.findByRole('radio', { name: /CinéBoutique/i })
-    await user.click(entityRadio)
+    // Un effet de la page peut annuler un clic arrivé pendant le chargement des boutiques :
+    // on reclique jusqu'à ce que la sélection soit effective.
+    await waitFor(async () => {
+      const entityRadio = screen.getByRole('radio', { name: /CinéBoutique/i })
+      await user.click(entityRadio)
+      expect(entityRadio).toHaveAttribute('aria-checked', 'true')
+    })
 
     const choice = await screen.findByRole('button', { name: /Boutique Alpha/i })
     await user.click(choice)
