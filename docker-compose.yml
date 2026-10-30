@@ -1,9 +1,13 @@
+# Nom de projet fixe : la prod tourne sous le projet « inventaire » (volume inventaire_dbdata).
+# Sans ce nom, Compose le déduit du dossier et partirait sur un volume vide.
+name: inventaire
+
 services:
   db:
     image: public.ecr.aws/docker/library/postgres:16-alpine
     container_name: inventory-db
-    ports:
-      - "55432:5432"
+    # Aucun port publié ici : un override ne peut pas retirer un port (Compose concatène les listes).
+    # Les ports de dev sont dans docker-compose.override.yml.
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres

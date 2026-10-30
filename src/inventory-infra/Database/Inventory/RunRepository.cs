@@ -156,8 +156,7 @@ LEFT JOIN "ShopUser" su ON su."Id" = cr."OwnerUserId" AND su."ShopId" = l."ShopI
 WHERE l."ShopId" = @ShopId
   AND cr."CompletedAtUtc" IS NOT NULL
   AND EXISTS (SELECT 1 FROM "CountLine" cl WHERE cl."CountingRunId" = cr."Id")
-ORDER BY cr."CompletedAtUtc" DESC
-LIMIT 50;
+ORDER BY cr."CompletedAtUtc" DESC;
 """;
 
         var completedRunRows = (await connection

@@ -947,7 +947,8 @@ export const completeInventoryRun = async (
       if (error.status === 400)
         message = messageFromBody ?? "Requête invalide.";
       else if (error.status === 404)
-        message = "Zone introuvable pour ce comptage.";
+        // Le serveur distingue « zone introuvable » et « run introuvable » : on relaie son détail.
+        message = messageFromBody ?? "Zone introuvable pour ce comptage.";
       else
         message =
           messageFromBody ??

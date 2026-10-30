@@ -1,9 +1,8 @@
+# En prod, la DB n'est pas publiée : docker-compose.yml ne déclare aucun port pour db.
 services:
-  db:
-    # En prod, DB privée
-    ports: []
-
   api:
+    env_file:
+      - secrets.env
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_DETAILEDERRORS: "false"
@@ -11,12 +10,10 @@ services:
       DISABLE_MIGRATIONS: "false"
       AppSettings__SeedOnStartup: "false"
       DISABLE_SERILOG: "false"
-      Serilog__MinimumLevel__Default: "Debug"
+      Serilog__MinimumLevel__Default: "Information"
       Serilog__WriteTo__0__Name: "Console"
       ASPNETCORE_URLS: http://0.0.0.0:8080
       AppSettings__CatalogEndpointsPublic: "true"
-    ports:
-      - "8080:8080" # <— expose l’API sur l’hôte
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null"]
       interval: 10s
@@ -24,15 +21,17 @@ services:
       retries: 10
 
   web:
+    env_file:
+      - secrets.env
     build:
       context: .
       dockerfile: Dockerfile.inventory-web
       args:
         BASE_REG: public.ecr.aws/docker/library
     environment:
-      PUBLIC_HOST: "https://192.168.2.29"
+      PUBLIC_HOST: "inventaire.tsf.fr"
     volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./nginx/templates:/etc/nginx/templates:ro
       - ./ssl:/etc/nginx/certs:ro
     ports:
       - "80:80"

@@ -11,7 +11,7 @@ const { plugins: _jsxA11yPlugins, parserOptions: _jsxA11yParserOptions, ...jsxA1
   jsxA11y.configs.recommended
 
 export default defineConfig([
-  globalIgnores(['dist', 'dev-dist']),
+  globalIgnores(['dist', 'dev-dist', 'coverage']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [

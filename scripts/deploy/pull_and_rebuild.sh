@@ -26,12 +26,16 @@ git reset --hard "origin/$BRANCH"
 echo "[deploy] Pulling submodules if any..."
 git submodule update --init --recursive
 
-echo "[deploy] Bringing containers up (build & recreate if needed)..."
-docker compose down --remove-orphans || true
+# Fichiers de prod explicites : sans -f, Compose chargerait docker-compose.override.yml (dev, API sur 8080)
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.prod.yml)
+
 APP_VERSION="$(git rev-parse --short HEAD)"
 echo "[deploy] Rebuilding images with APP_VERSION=${APP_VERSION}"
-docker compose build --build-arg "APP_VERSION=${APP_VERSION}"
-docker compose up -d
+"${COMPOSE[@]}" build --build-arg "APP_VERSION=${APP_VERSION}"
+
+# Build avant up : les anciens conteneurs servent pendant la construction
+echo "[deploy] Bringing containers up (recreate if needed)..."
+"${COMPOSE[@]}" up -d --remove-orphans
 
 echo "[deploy] Pruning old images (optional)..."
 docker image prune -f || true

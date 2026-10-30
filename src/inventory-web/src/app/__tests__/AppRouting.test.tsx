@@ -63,6 +63,7 @@ const createUseInventoryValue = (overrides: Partial<UseInventoryValue> = {}): Us
   sessionId: null,
   items: [],
   logs: [],
+  restoredDraft: null,
   setSelectedUser: vi.fn(),
   setCountType: vi.fn(),
   setLocation: vi.fn(),
@@ -75,6 +76,7 @@ const createUseInventoryValue = (overrides: Partial<UseInventoryValue> = {}): Us
   clearSession: vi.fn(),
   logEvent: vi.fn(),
   clearLogs: vi.fn(),
+  dismissRestoredDraft: vi.fn(),
   ...overrides,
 })
 

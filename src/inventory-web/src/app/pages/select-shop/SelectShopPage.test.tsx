@@ -228,8 +228,13 @@ describe('SelectShopPage', () => {
 
     renderPage()
 
-    const entityRadio = await screen.findByRole('radio', { name: /CinéBoutique/i })
-    fireEvent.click(entityRadio)
+    // Un effet de la page peut annuler un clic arrivé pendant le chargement des boutiques :
+    // on reclique jusqu'à ce que la sélection soit effective.
+    await waitFor(() => {
+      const entityRadio = screen.getByRole('radio', { name: /CinéBoutique/i })
+      fireEvent.click(entityRadio)
+      expect(entityRadio).toHaveAttribute('aria-checked', 'true')
+    })
 
     const shopButton = await screen.findByRole('button', { name: /CinéBoutique République/i })
     expect(shopButton).toBeInTheDocument()

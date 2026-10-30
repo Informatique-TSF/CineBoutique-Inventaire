@@ -31,7 +31,10 @@ namespace CineBoutique.Inventory.Api.Tests.Infrastructure
         .AddEnvironmentVariables()
         .Build();
 
-      var cs = cfg.GetConnectionString("Default")
+      // TEST_DB_CONN (CI, poste de dev) ou conteneur Testcontainers en priorité : appsettings.json ne décrit pas la base de test.
+      var cs = TestDbOptions.ExternalConnectionString
+               ?? PostgresContainerFixture.Instance?.ConnectionString
+               ?? cfg.GetConnectionString("Default")
                ?? Environment.GetEnvironmentVariable("ConnectionStrings__Default")
                ?? string.Empty;
 

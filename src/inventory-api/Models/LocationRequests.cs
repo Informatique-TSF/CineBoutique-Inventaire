@@ -27,7 +27,7 @@ public sealed class UpdateLocationRequest
 }
 
 /// <summary>
-/// Requ�te de mise � jour du statut d'activation d'une zone.
+/// Requête de mise à jour du statut d'activation d'une zone.
 /// </summary>
 [ExcludeFromCodeCoverage]
 public sealed class UpdateLocationStatusRequest

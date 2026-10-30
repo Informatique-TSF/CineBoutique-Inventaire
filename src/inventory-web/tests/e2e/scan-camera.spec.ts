@@ -82,7 +82,7 @@ declare global {
   }
 }
 
-test.describe('Mode scan caméra - bottom sheet', () => {
+test.describe('Mode scan caméra - liste des articles', () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(({ shop }) => {
       window.localStorage.setItem('cb.shop', JSON.stringify(shop))
@@ -120,6 +120,9 @@ test.describe('Mode scan caméra - bottom sheet', () => {
       })
 
       class FakeBarcodeDetector {
+        static async getSupportedFormats() {
+          return ['ean_13', 'ean_8', 'code_128', 'code_39', 'itf', 'qr_code']
+        }
         constructor(options: { formats?: string[] } = {}) {
           void options
         }
@@ -253,6 +256,15 @@ test.describe('Mode scan caméra - bottom sheet', () => {
       }
 
       const url = new URL(request.url())
+      if (url.pathname.endsWith('/products/search')) {
+        const match = productsByEan[url.searchParams.get('code') ?? '']
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(match ? [match] : []),
+        })
+        return
+      }
       const ean = url.pathname.split('/').pop() ?? ''
       const product = productsByEan[ean]
 
@@ -269,12 +281,12 @@ test.describe('Mode scan caméra - bottom sheet', () => {
     })
   })
 
-  test('affiche la bottom sheet et permet d\'ajuster les quantités', async ({ page }) => {
+  test('ajoute les articles scannés et permet d\'ajuster les quantités', async ({ page }) => {
     await page.goto('/inventory/location')
 
     await expect(page).toHaveURL(/\/select-user/, { timeout: 5000 })
 
-    const identifyHeading = page.getByRole('heading', { name: 'Merci de vous identifier' })
+    const identifyHeading = page.getByRole('heading', { name: 'Choisir un utilisateur' })
     await expect(identifyHeading).toBeVisible({ timeout: 5000 })
 
     const userButton = page.getByRole('button', { name: mockUsers[0].displayName })
@@ -325,8 +337,7 @@ test.describe('Mode scan caméra - bottom sheet', () => {
 
     const sheet = page.getByTestId('scan-sheet')
     await expect(sheet).toBeVisible({ timeout: 5000 })
-    await expect(sheet).toHaveAttribute('data-state', 'closed')
-    await expect(sheet.getByText('Scannez un article pour débuter.')).toBeVisible({ timeout: 5000 })
+    await expect(sheet.getByText('Scannez un article pour commencer le comptage.')).toBeVisible({ timeout: 5000 })
 
     for (const product of scannedProducts) {
       await page.evaluate((ean) => {
@@ -337,22 +348,8 @@ test.describe('Mode scan caméra - bottom sheet', () => {
       await expect(sheet.getByText(`EAN ${product.ean}`, { exact: true })).toBeVisible({ timeout: 5000 })
     }
 
-    await expect(sheet.locator('[data-testid="scanned-row"]')).toHaveCount(3)
-    await expect(sheet.getByText(scannedProducts[0].name, { exact: true })).toHaveCount(0)
-    await expect(sheet.locator('[data-testid="scanned-row"]').last()).toContainText(scannedProducts.at(-1)?.name ?? '')
-
-    const handle = page.getByTestId('scan-sheet-handle')
-    const handleBox = await handle.boundingBox()
-    expect(handleBox).not.toBeNull()
-    const handleCenterX = Math.round(handleBox!.x + handleBox!.width / 2)
-    const handleCenterY = Math.round(handleBox!.y + handleBox!.height / 2)
-    await page.mouse.move(handleCenterX, handleCenterY)
-    await page.mouse.down()
-    await page.mouse.move(handleCenterX, handleCenterY - 200, { steps: 10 })
-    await page.mouse.up()
-    await expect(sheet).toHaveAttribute('data-state', 'half')
     await expect(sheet.locator('[data-testid="scanned-row"]')).toHaveCount(scannedProducts.length)
-    await expect(sheet.getByText(scannedProducts[0].name, { exact: true })).toBeVisible({ timeout: 5000 })
+    await expect(sheet.getByText(`${scannedProducts.length} pièces`)).toBeVisible()
 
     const lastProductName = scannedProducts.at(-1)?.name ?? ''
     expect(lastProductName).not.toEqual('')
@@ -364,8 +361,8 @@ test.describe('Mode scan caméra - bottom sheet', () => {
     await quantityInput.click()
     await quantityInput.fill('5')
     await quantityInput.press('Enter')
-    await expect(sheet).toHaveAttribute('data-state', 'full')
     await expect(quantityInput).toHaveValue('5')
+    await expect(sheet.getByText(`${scannedProducts.length + 4} pièces`)).toBeVisible()
     await quantityInput.blur()
   })
 })

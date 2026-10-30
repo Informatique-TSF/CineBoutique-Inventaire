@@ -8,7 +8,7 @@
 
   <PropertyGroup>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
-    <NoWarn>$(NoWarn);NU1602;NU1603;NU1604;NU1701;NU1903;1591</NoWarn>
+    <NoWarn>$(NoWarn);NU1602;NU1603;NU1604;NU1701;1591</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

@@ -137,6 +137,9 @@ test.describe('Scanner avec BarcodeDetector', () => {
       })
 
       class FakeBarcodeDetector {
+        static async getSupportedFormats() {
+          return ['ean_13', 'ean_8', 'code_128', 'code_39', 'itf', 'qr_code']
+        }
         detect = async () => [{ rawValue: ean, format: 'ean_13' as const }]
       }
 
@@ -203,6 +206,18 @@ test.describe('Scanner avec BarcodeDetector', () => {
       await route.fallback()
     })
 
+    await page.route('**/api/products/search**', async (route, request) => {
+      if (request.method() === 'GET') {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([{ ean: simulatedEan, name: 'Produit simulé' }]),
+        })
+        return
+      }
+      await route.fallback()
+    })
+
     await page.route(`**/api/products/${simulatedEan}**`, async (route, request) => {
       if (request.method() === 'GET') {
         await route.fulfill({
@@ -221,7 +236,7 @@ test.describe('Scanner avec BarcodeDetector', () => {
 
     await expect(page).toHaveURL(/\/select-user/, { timeout: 5000 })
 
-    const identifyHeading = page.getByRole('heading', { name: 'Merci de vous identifier' })
+    const identifyHeading = page.getByRole('heading', { name: 'Choisir un utilisateur' })
     await expect(identifyHeading).toBeVisible({ timeout: 5000 })
 
     const userButton = page.getByRole('button', { name: mockUsers[0].displayName })

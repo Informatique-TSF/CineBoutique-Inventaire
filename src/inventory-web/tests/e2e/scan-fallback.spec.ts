@@ -144,7 +144,7 @@ test.describe('Scanner fallback', () => {
 
     await expect(page).toHaveURL(/\/select-user/, { timeout: 5000 })
 
-    const identifyHeading = page.getByRole('heading', { name: 'Merci de vous identifier' })
+    const identifyHeading = page.getByRole('heading', { name: 'Choisir un utilisateur' })
     await expect(identifyHeading).toBeVisible({ timeout: 5000 })
 
     const userButton = page.getByRole('button', { name: mockUsers[0].displayName })
@@ -190,11 +190,12 @@ test.describe('Scanner fallback', () => {
     await expect(page).toHaveURL(/\/inventory\/scan-camera/, { timeout: 5000 })
     await expect(page.getByTestId('scan-camera-page')).toBeVisible({ timeout: 5000 })
 
-    await expect(
-      page.getByText('Caméra indisponible (connexion non sécurisée ou navigateur incompatible).'),
-    ).toBeVisible({ timeout: 5000 })
-    const fileInput = page.getByLabel('Importer une photo du code-barres')
-    await expect(fileInput).toBeVisible({ timeout: 5000 })
+    const cameraError = page.getByTestId('scan-camera-error')
+    await expect(cameraError).toBeVisible({ timeout: 5000 })
+    await expect(cameraError).toContainText('Site non sécurisé (HTTPS requis)')
+    await expect(page.getByTestId('scan-photo-fallback')).toBeVisible({ timeout: 5000 })
+    const fileInput = page.getByTestId('scan-photo-input')
+    await expect(fileInput).toHaveCount(1)
     const inputType = await fileInput.getAttribute('type')
     expect(inputType).toBe('file')
   })

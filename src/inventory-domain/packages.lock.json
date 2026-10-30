@@ -7,9 +7,6 @@
         "requested": "[8.0.0, )",
         "resolved": "8.0.0",
         "contentHash": "DxiTgkCl3CGq1rYmBX2wjY7XGbxiBdL4J+/AJIAFLKy5z70NxhnVRnPghnicXZ8oF6JKVXlW3xwznRbI3ioEKg=="
-      },
-      "cineboutique.inventory.shared": {
-        "type": "Project"
       }
     }
   }

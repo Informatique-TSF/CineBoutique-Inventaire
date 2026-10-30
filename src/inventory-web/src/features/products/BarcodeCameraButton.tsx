@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 
-type BarcodeDetectorOptions = { formats?: string[] };
-
-interface BarcodeDetectorConstructor {
-  prototype: BarcodeDetector;
-  new (options?: BarcodeDetectorOptions): BarcodeDetector;
-}
+import { getBarcodeDetector, type ScanDetector } from "@/lib/scan/barcodeDetector";
+import { describeCameraError } from "@/lib/scan/cameraErrors";
 
 declare global {
   interface Window {
-    BarcodeDetector?: BarcodeDetectorConstructor;
     webkitAudioContext?: typeof AudioContext;
   }
 }
@@ -50,14 +45,22 @@ function haptic() {
   }
 }
 
+const isCameraSupported = () =>
+  typeof navigator !== "undefined" &&
+  typeof navigator.mediaDevices?.getUserMedia === "function" &&
+  (typeof window === "undefined" || window.isSecureContext !== false);
+
 export function BarcodeCameraButton(props: { onDetected?: (value: string) => void }) {
-  const supported = typeof window.BarcodeDetector === "function";
+  const supported = isCameraSupported();
   const [active, setActive] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const activeRef = useRef(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<BarcodeDetector | null>(null);
+  const detectorRef = useRef<ScanDetector | null>(null);
 
   function stop() {
+    activeRef.current = false;
     setActive(false);
     const video = videoRef.current;
     if (video) {
@@ -82,19 +85,24 @@ export function BarcodeCameraButton(props: { onDetected?: (value: string) => voi
   }, []);
 
   async function start() {
-    if (!supported || !window.BarcodeDetector) return;
+    if (!supported) return;
+    setError(null);
     try {
-      detectorRef.current = new window.BarcodeDetector({ formats: ["ean_13", "ean_8", "code_128"] });
-      streamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+      detectorRef.current = await getBarcodeDetector(["EAN_13", "EAN_8", "CODE_128"]);
+      streamRef.current = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
       const video = videoRef.current;
       if (video) {
         video.srcObject = streamRef.current;
         await video.play();
       }
+      activeRef.current = true;
       setActive(true);
       requestAnimationFrame(scan);
-    } catch (error) {
-      void error;
+    } catch (err) {
+      const { message, technical } = describeCameraError(err);
+      setError(technical ? `${message} (${technical})` : message);
       stop();
     }
   }
@@ -102,37 +110,44 @@ export function BarcodeCameraButton(props: { onDetected?: (value: string) => voi
   async function scan() {
     const video = videoRef.current;
     const detector = detectorRef.current;
-    if (!active || !video || !detector) return;
+    if (!activeRef.current || !video || !detector) return;
     try {
-      const bitmap = await createImageBitmap(video);
-      const codes = await detector.detect(bitmap);
-      bitmap.close?.();
-      if (codes && codes.length > 0) {
-        const raw = String(codes[0].rawValue).trim();
-        if (raw) {
-          beep();
-          haptic();
-          props.onDetected?.(raw);
-          stop();
-          return;
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        const codes = await detector.detect(video);
+        if (codes && codes.length > 0) {
+          const raw = String(codes[0].rawValue).trim();
+          if (raw) {
+            beep();
+            haptic();
+            props.onDetected?.(raw);
+            stop();
+            return;
+          }
         }
       }
     } catch (error) {
       void error;
     }
-    requestAnimationFrame(scan);
+    if (activeRef.current) {
+      requestAnimationFrame(scan);
+    }
   }
 
   if (!supported) {
-    return <button type="button" disabled title="BarcodeDetector non supporté">Caméra non supportée</button>;
+    return (
+      <button type="button" disabled title="Accès caméra indisponible dans ce navigateur">
+        Caméra non supportée
+      </button>
+    );
   }
 
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-      <button type="button" onClick={() => (active ? stop() : start())}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <button type="button" onClick={() => (active ? stop() : void start())}>
         {active ? "Arrêter caméra" : "Activer caméra"}
       </button>
-      {active && <video ref={videoRef} style={{ width: 160, height: 120, background: "#000" }} muted />}
+      {active && <video ref={videoRef} style={{ width: 160, height: 120, background: "#000" }} muted playsInline />}
+      {error && <span style={{ fontSize: 12, color: "#b91c1c" }}>{error}</span>}
     </span>
   );
 }

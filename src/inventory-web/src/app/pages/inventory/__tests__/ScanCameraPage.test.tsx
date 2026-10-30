@@ -15,8 +15,20 @@ import type { ShopUser } from '@/types/user'
 
 const fetchProductByEanMock = vi.hoisted(() => vi.fn())
 const startInventoryRunMock = vi.hoisted(() => vi.fn())
+const decodeBarcodeFromFileMock = vi.hoisted(() => vi.fn())
 const scannerCallbacks = vi.hoisted(() => ({
   onDetected: undefined as undefined | ((value: string) => void | Promise<void>),
+  onPickImage: undefined as undefined | ((file: File) => void),
+}))
+// État caméra piloté par les tests : la page est testée indépendamment du hook `useCamera`
+// (dont le comportement réel — getUserMedia, contraintes, repli — est couvert par ses propres tests).
+const cameraState = vi.hoisted(() => ({
+  active: false,
+  error: null as unknown,
+  canSwitchCamera: false,
+  switchCamera: vi.fn(async () => undefined),
+  start: vi.fn(async () => undefined),
+  stop: vi.fn(),
 }))
 
 vi.mock('../../../api/inventoryApi', async (importOriginal) => {
@@ -28,13 +40,32 @@ vi.mock('../../../api/inventoryApi', async (importOriginal) => {
   }
 })
 
+vi.mock('@/lib/scan/barcodeDetector', () => ({
+  decodeBarcodeFromFile: decodeBarcodeFromFileMock,
+}))
+
+vi.mock('@/hooks/useCamera', () => ({
+  useCamera: () => ({
+    active: cameraState.active,
+    error: cameraState.error,
+    start: cameraState.start,
+    stop: cameraState.stop,
+    devices: [],
+    currentDeviceId: null,
+    canSwitchCamera: cameraState.canSwitchCamera,
+    switchCamera: cameraState.switchCamera,
+  }),
+}))
+
 vi.mock('../../../components/BarcodeScanner', () => ({
   BarcodeScanner: ({
     onDetected,
+    onPickImage,
     onTorchStateChange,
     torchControllerRef,
   }: {
     onDetected: (value: string) => void | Promise<void>
+    onPickImage?: (file: File) => void
     onTorchStateChange?: (state: { supported: boolean; enabled: boolean }) => void
     torchControllerRef?: {
       current: null | { set: (value: boolean) => Promise<boolean>; toggle: () => Promise<boolean> }
@@ -43,6 +74,7 @@ vi.mock('../../../components/BarcodeScanner', () => ({
     // Déclenche les callbacks après le render pour éviter les warnings “setState during render”.
     useEffect(() => {
       scannerCallbacks.onDetected = onDetected
+      scannerCallbacks.onPickImage = onPickImage
       onTorchStateChange?.({ supported: false, enabled: false })
       if (torchControllerRef) {
         torchControllerRef.current = {
@@ -50,7 +82,7 @@ vi.mock('../../../components/BarcodeScanner', () => ({
           toggle: async () => true,
         }
       }
-    }, [onDetected, onTorchStateChange, torchControllerRef])
+    }, [onDetected, onPickImage, onTorchStateChange, torchControllerRef])
 
     return (
       <button type="button" data-testid="mock-barcode-scanner" onClick={() => onDetected('0123456789012')}>
@@ -155,7 +187,15 @@ const renderScanCameraPage = (options?: {
 afterEach(() => {
   fetchProductByEanMock.mockReset()
   startInventoryRunMock.mockReset()
+  decodeBarcodeFromFileMock.mockReset()
   scannerCallbacks.onDetected = undefined
+  scannerCallbacks.onPickImage = undefined
+  cameraState.active = false
+  cameraState.error = null
+  cameraState.canSwitchCamera = false
+  cameraState.switchCamera.mockClear()
+  cameraState.start.mockClear()
+  cameraState.stop.mockClear()
   cleanup()
 })
 
@@ -332,5 +372,94 @@ describe('ScanCameraPage', () => {
     await new Promise((resolve) => setTimeout(resolve, 800))
     await scannerCallbacks.onDetected?.('0123456789012')
     await waitFor(() => expect(fetchProductByEanMock).toHaveBeenCalledTimes(2))
+  })
+
+  it('décode une photo de secours avec le même détecteur et traite le code lu', async () => {
+    decodeBarcodeFromFileMock.mockResolvedValue('4006381333931')
+    fetchProductByEanMock.mockResolvedValue({ ean: '4006381333931', name: 'Produit photo' })
+    startInventoryRunMock.mockResolvedValue({ runId: 'run-photo' })
+
+    let latestItems: InventoryItem[] = []
+    renderScanCameraPage({
+      onItemsChange: (items) => {
+        latestItems = items
+      },
+    })
+
+    await waitFor(() => expect(typeof scannerCallbacks.onPickImage).toBe('function'))
+    const file = new File(['x'], 'code.jpg', { type: 'image/jpeg' })
+    scannerCallbacks.onPickImage?.(file)
+
+    await waitFor(() => expect(decodeBarcodeFromFileMock).toHaveBeenCalledWith(file))
+    await waitFor(() =>
+      expect(fetchProductByEanMock).toHaveBeenCalledWith(
+        '4006381333931',
+        expect.objectContaining({ signal: expect.any(Object) }),
+      ),
+    )
+    await waitFor(() => expect(latestItems.some((item) => item.product.ean === '4006381333931')).toBe(true))
+    expect(await screen.findByText('Produit photo')).toBeInTheDocument()
+  })
+
+  it('explique quand la photo ne contient aucun code lisible', async () => {
+    decodeBarcodeFromFileMock.mockResolvedValue(null)
+
+    renderScanCameraPage()
+
+    await waitFor(() => expect(typeof scannerCallbacks.onPickImage).toBe('function'))
+    scannerCallbacks.onPickImage?.(new File(['x'], 'flou.jpg', { type: 'image/jpeg' }))
+
+    expect(
+      await screen.findByText('Aucun code-barres lisible sur la photo. Rapprochez-vous et réessayez.'),
+    ).toBeInTheDocument()
+    expect(fetchProductByEanMock).not.toHaveBeenCalled()
+  })
+
+  it('affiche un message caméra en français avec le détail technique en petit', async () => {
+    cameraState.error = new DOMException('Permission denied', 'NotAllowedError')
+
+    renderScanCameraPage()
+
+    const panel = await screen.findByTestId('scan-camera-error')
+    expect(within(panel).getByText('Caméra indisponible')).toBeInTheDocument()
+    expect(
+      within(panel).getByText('Autorisez l’accès à la caméra dans les réglages du navigateur, puis réessayez.'),
+    ).toBeInTheDocument()
+    expect(within(panel).queryByText(/NotAllowedError/)).not.toBeInTheDocument()
+  })
+
+  it('signale un site non sécurisé plutôt qu’une erreur technique brute', async () => {
+    const insecure = new Error('getUserMedia indisponible')
+    insecure.name = 'InsecureContextError'
+    cameraState.error = insecure
+
+    renderScanCameraPage()
+
+    expect(
+      await screen.findByText('Site non sécurisé (HTTPS requis). Contactez le service informatique.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/getUserMedia indisponible/)).not.toBeInTheDocument()
+  })
+
+  it('propose de changer de caméra uniquement quand le hook le permet', async () => {
+    cameraState.active = true
+    cameraState.canSwitchCamera = true
+
+    renderScanCameraPage()
+
+    const button = await screen.findByTestId('scan-camera-switch')
+    expect(button).toHaveAccessibleName('Changer de caméra')
+    await userEvent.click(button)
+    expect(cameraState.switchCamera).toHaveBeenCalledTimes(1)
+  })
+
+  it('masque le changement de caméra sans second objectif arrière', async () => {
+    cameraState.active = true
+    cameraState.canSwitchCamera = false
+
+    renderScanCameraPage()
+
+    await screen.findByText('CinéBoutique Paris')
+    expect(screen.queryByTestId('scan-camera-switch')).not.toBeInTheDocument()
   })
 })

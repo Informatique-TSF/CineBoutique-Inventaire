@@ -26,10 +26,6 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: 1
       PGPORT: 5432
       ConnectionStrings__Default: Host=localhost;Port=5432;Database=inventory;Username=postgres;Password=postgres
-      ConnectionStrings__Inventory: Host=localhost;Port=5432;Database=inventory;Username=postgres;Password=postgres
-      InventoryDb__ConnectionString: Host=localhost;Port=5432;Database=inventory;Username=postgres;Password=postgres
-      Database__ConnectionString: Host=localhost;Port=5432;Database=inventory;Username=postgres;Password=postgres
-      AppSettings__Db__ConnectionString: Host=localhost;Port=5432;Database=inventory;Username=postgres;Password=postgres
 
     steps:
       - name: Checkout
@@ -42,9 +38,7 @@ jobs:
           database: inventory
 
       - name: Init CI DB user/password (mirror docker-compose env)
-        shell: bash
         run: |
-          # Crée/MAJ le superuser 'postgres' + droits sur DB 'inventory' (heredoc littéral = pas d'expansion)
           psql -d postgres <<'SQL'
           DO $do$
           BEGIN
@@ -58,13 +52,7 @@ jobs:
           GRANT ALL PRIVILEGES ON DATABASE inventory TO postgres;
           SQL
 
-      - name: Sanity check DB (inventory)
-        shell: bash
-        run: |
-          psql -d inventory -c "select current_database(), current_user;"
-
       - name: Wait for PostgreSQL
-        shell: bash
         run: |
           for i in {1..30}; do
             if psql -d postgres -c 'select 1' >/dev/null 2>&1; then
@@ -83,21 +71,13 @@ jobs:
             Directory.Packages.props
             **/*.csproj
 
-      - name: Export DB env (build the conn string with mapped port)
+      - name: Export DB env
         run: |
-          echo "PGPORT=5432" >> $GITHUB_ENV
           echo "ConnectionStrings__Default=Host=127.0.0.1;Port=5432;Database=inventory;Username=postgres;Password=postgres" >> $GITHUB_ENV
           echo "TEST_DB_CONN=Host=127.0.0.1;Port=5432;Database=inventory;Username=postgres;Password=postgres" >> $GITHUB_ENV
 
-      - name: Dotnet info
-        run: |
-          which dotnet
-          dotnet --info
-          dotnet --list-sdks
-          dotnet --list-runtimes
-
       - name: Restore
-        run: dotnet restore --verbosity minimal
+        run: dotnet restore --locked-mode --verbosity minimal
 
       - name: Build
         run: dotnet build --no-restore -c Release
@@ -111,37 +91,63 @@ jobs:
             --results-directory "test-results/dotnet" \
             --collect:"XPlat Code Coverage;Format=cobertura"
 
+      # Un test d'intégration ignoré (pas de base) rendrait la CI verte à tort.
+      - name: Guard - aucun test .NET ignoré
+        run: |
+          status=0
+          for trx in $(find test-results/dotnet -name '*.trx'); do
+            counters=$(grep -o '<Counters [^>]*>' "$trx" | head -1)
+            skipped=$(echo "$counters" | grep -oE 'notExecuted="[0-9]+"' | grep -oE '[0-9]+' || echo 0)
+            total=$(echo "$counters" | grep -oE 'total="[0-9]+"' | grep -oE '[0-9]+' || echo 0)
+            echo "$trx : total=$total ignorés=$skipped"
+            if [ "${skipped:-0}" != "0" ]; then status=1; fi
+          done
+          if [ "$status" != "0" ]; then
+            echo "::error::Des tests .NET ont été ignorés (base de test indisponible ?)"; exit 1
+          fi
+
+      - name: Audit NuGet (paquets vulnérables, transitifs inclus)
+        run: |
+          dotnet list CineBoutique.Inventory.sln package --vulnerable --include-transitive | tee nuget-audit.txt
+          if grep -qE 'High|Critical|Élevée|Critique' nuget-audit.txt; then
+            echo "::error::Vulnérabilité High/Critical dans les paquets NuGet"; exit 1
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
-          # On met en cache le lockfile RACINE (monorepo)
           cache-dependency-path: package-lock.json
 
-      # ⚠️ Installer les deps du MONOREPO d'après le lock racine
-      - name: Install workspace deps (root)
-        run: |
-          npm --version
-          npm ci || npm install
+      - name: Install workspace deps (root lockfile)
+        run: npm ci --no-audit --no-fund
 
-      # ✅ Typecheck dans le workspace 'src/inventory-web'
+      - name: Guard - encodage des sources (aucun caractère U+FFFD)
+        run: |
+          if LC_ALL=C grep -rl $'\xef\xbf\xbd' src/inventory-web/src src/inventory-api src/inventory-infra --include='*.ts' --include='*.tsx' --include='*.cs'; then
+            echo "::error::Caractère de remplacement U+FFFD trouvé : fichier mal encodé"; exit 1
+          fi
+          echo "Encodage OK"
+
+      - name: Lint web
+        run: npm -w src/inventory-web run lint
+
       - name: Typecheck web
         run: npm -w src/inventory-web run typecheck
 
-      # ✅ Build dans le workspace 'src/inventory-web'
+      - name: Test web (Vitest + couverture)
+        run: npm -w src/inventory-web run test -- --reporter=dot --coverage
+
       - name: Build web
         run: npm -w src/inventory-web run build
 
+      - name: Audit npm (dépendances livrées uniquement)
+        run: npm audit --omit=dev --audit-level=high
+
       - name: ReportGenerator (HTML)
         run: |
-          # Installer l'outil et l'ajouter au PATH
           dotnet tool install --global dotnet-reportgenerator-globaltool
           echo "$HOME/.dotnet/tools" >> $GITHUB_PATH
-
-          # Debug : montre les fichiers réellement présents
-          find test-results/dotnet -type f -name "coverage.cobertura.xml" -print
-
-          # IMPORTANT : le ';' doit être QUOTÉ pour ne pas être interprété par bash
           reportgenerator \
             -reports:'test-results/dotnet/**/coverage.cobertura.xml' \
             -targetdir:'test-results/dotnet/coverage-report' \
@@ -154,9 +160,11 @@ jobs:
           name: test-trx
           path: test-results/dotnet/**/*.trx
 
-      - name: Upload coverage report
+      - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-report
-          path: test-results/dotnet/coverage-report/**
+          name: coverage-reports
+          path: |
+            test-results/dotnet/coverage-report/**
+            src/inventory-web/coverage/**
