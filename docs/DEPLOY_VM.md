@@ -3,7 +3,8 @@
 ## Pré-requis sur la VM
 - Docker et le plugin Docker Compose installés, utilisateur courant membre du groupe `docker`.
 - Git installé, dépôt cloné dans `~/apps/CineBoutique-Inventaire`.
-- Certificat TLS reconnu par les téléphones dans `./ssl/fullchain.pem` et `./ssl/privkey.pem` (voir `docs/DEMANDE_IT.md`). Sans certificat, le conteneur web génère un certificat auto-signé : utilisable pour tester, mais les téléphones refuseront la caméra.
+- Certificat TLS reconnu par les téléphones dans `./ssl/fullchain.pem` et `./ssl/privkey.pem` (voir `docs/DEMANDE_IT.md`). En prod, `./ssl` est monté en lecture seule : s'il est vide, le conteneur web ne peut pas générer de certificat auto-signé et ne démarre pas.
+- Le projet Compose s'appelle `inventaire` (champ `name:` de `docker-compose.yml`), quel que soit le dossier : les données sont dans le volume `inventaire_dbdata`. Jusqu'en octobre 2026, la prod tournait depuis `~/apps/inventaire` ; ce dossier est gardé tel quel pour un retour arrière.
 - Fichier `secrets.env` créé à partir de `secrets.env.example` (jeton applicatif, jamais versionné).
 
 ## Fichiers Compose
