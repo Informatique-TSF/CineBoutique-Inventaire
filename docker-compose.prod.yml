@@ -1,8 +1,5 @@
+# En prod, la DB n'est pas publiée : docker-compose.yml ne déclare aucun port pour db.
 services:
-  db:
-    # En prod, DB privée
-    ports: []
-
   api:
     env_file:
       - secrets.env
@@ -32,7 +29,7 @@ services:
       args:
         BASE_REG: public.ecr.aws/docker/library
     environment:
-      PUBLIC_HOST: "https://192.168.2.29"
+      PUBLIC_HOST: "inventaire.tsf.fr"
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro
       - ./ssl:/etc/nginx/certs:ro

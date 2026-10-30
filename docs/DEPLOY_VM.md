@@ -22,8 +22,11 @@ Vérifications après déploiement :
 curl -k https://localhost/health                 # Nginx
 curl -k https://localhost/api/health             # API via Nginx (jeton posé par Nginx)
 curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/api/health   # doit échouer : port non publié
+docker port inventory-api; docker port inventory-db   # aucune sortie attendue
 docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
+
+Pare-feu : Docker publie ses ports par ses propres règles iptables, que `ufw` ne filtre pas. La fermeture de 8080 et de la base repose donc sur l'absence de publication ; une règle `ufw` sur 8080 ne protège que d'un service lancé hors Docker.
 
 ## Jeton applicatif (X-App-Token)
 L'API refuse toute requête `/api/*` sans le jeton `Authentication__AppToken` et refuse de démarrer en Production s'il est absent. Nginx pose l'en-tête `X-App-Token` sur chaque requête proxifiée (variable `APP_TOKEN`, substituée au démarrage dans `nginx/templates/site.conf.template`). Le navigateur ne connaît jamais le jeton.

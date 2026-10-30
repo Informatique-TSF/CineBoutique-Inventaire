@@ -2,8 +2,8 @@ services:
   db:
     image: public.ecr.aws/docker/library/postgres:16-alpine
     container_name: inventory-db
-    ports:
-      - "55432:5432"
+    # Aucun port publié ici : un override ne peut pas retirer un port (Compose concatène les listes).
+    # Les ports de dev sont dans docker-compose.override.yml.
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
