@@ -134,6 +134,7 @@ internal static class SessionsEndpoints
             CancellationToken cancellationToken) =>
                 handler.HandleAsync(shopId, httpContext, cancellationToken))
         .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>()
         .WithName("ResetShopInventory")
         .WithTags("Inventories")
         .Produces<ResetShopInventoryResponse>(StatusCodes.Status200OK)

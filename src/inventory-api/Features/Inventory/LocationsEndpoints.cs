@@ -187,7 +187,8 @@ internal static class LocationsEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status409Conflict)
-        .AddEndpointFilter<RequireOperatorHeadersFilter>();
+        .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>();
 
         app.MapPut(
             "/api/locations/{locationId:guid}",
@@ -304,7 +305,8 @@ internal static class LocationsEndpoints
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status409Conflict)
-        .AddEndpointFilter<RequireOperatorHeadersFilter>();
+        .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>();
 
         app.MapPatch(
             "/api/locations/{locationId:guid}/status",
@@ -419,7 +421,8 @@ WHERE "Id" = @Id AND "ShopId" = @ShopId;
         .Produces(StatusCodes.Status400BadRequest)
         .Produces(StatusCodes.Status404NotFound)
         .Produces(StatusCodes.Status409Conflict)
-        .AddEndpointFilter<RequireOperatorHeadersFilter>();
+        .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>();
 
         app.MapDelete(
             "/api/locations/{locationId:guid}",
@@ -495,7 +498,8 @@ WHERE "Id" = @Id AND "ShopId" = @ShopId;
         .WithTags("Locations")
         .Produces<LocationListItemDto>(StatusCodes.Status200OK)
         .Produces(StatusCodes.Status404NotFound)
-        .AddEndpointFilter<RequireOperatorHeadersFilter>();
+        .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>();
     }
 
     private static async Task<DisableLocationOperationResult> DisableLocationAsync(

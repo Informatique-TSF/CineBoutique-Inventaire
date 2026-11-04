@@ -122,6 +122,7 @@ internal static class ImportEndpoints
             }
         })
         .AddEndpointFilter<RequireOperatorHeadersFilter>()
+        .AddEndpointFilter<RequireShopAdminFilter>()
         .RequireAuthorization("Admin");
 
         app.MapGet("/api/shops/{shopId:guid}/products/import/status", async (
