@@ -5,22 +5,34 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 
 import { fetchProductByEan, startInventoryRun } from "../../api/inventoryApi";
 import {
   BarcodeScanner,
+  type ScanFrameTone,
   type TorchController,
   type TorchState,
 } from "../../components/BarcodeScanner";
-import { ScannedRow } from "../../components/inventory/ScannedRow";
-import { useInventory, type InventoryItemMutationResult } from "../../contexts/InventoryContext";
-import type { Product } from "../../types/inventory";
+import {
+  ListIcon,
+  ScanCountSheet,
+  ScanErrorSheet,
+  ScanItemsSheet,
+  ScanLookupSheet,
+  ScanUndoToast,
+} from "../../components/inventory/ScanSheets";
+import { formatPieces } from "../../components/inventory/scanFormat";
+import { useInventory } from "../../contexts/InventoryContext";
+import type { InventoryItem, Product } from "../../types/inventory";
 
 import { useCamera, type CameraOptions } from "@/hooks/useCamera";
 import { useScanDuplicateFeedback } from "@/hooks/useScanDuplicateFeedback";
 import { useScanRejectionFeedback } from "@/hooks/useScanRejectionFeedback";
+import { useScanSuccessFeedback } from "@/hooks/useScanSuccessFeedback";
 import {
   AbortedRequestError,
   RequestTimeoutError,
@@ -31,7 +43,14 @@ import { describeCameraError } from "@/lib/scan/cameraErrors";
 import { useShop } from "@/state/ShopContext";
 
 const MAX_SCAN_LENGTH = 32;
-const LOCK_RELEASE_DELAY = 700;
+/**
+ * Après validation ou annulation, le même code est ignoré tant que la caméra continue de le voir,
+ * puis pendant ce délai : on évite de rouvrir la fiche sur l’étiquette qu’on vient de traiter.
+ */
+export const SAME_CODE_COOLDOWN_MS = 2000;
+/** Durée d’affichage du bandeau « +N … Annuler » après validation. */
+export const UNDO_TOAST_DURATION_MS = 5000;
+
 const isTestEnv =
   typeof import.meta !== "undefined" && import.meta.env?.MODE === "test";
 
@@ -40,7 +59,31 @@ const sanitizeScanValue = (value: string) => value.replace(/[\r\n\t]+/g, "");
 const isScanLengthValid = (code: string) =>
   code.length > 0 && code.length <= MAX_SCAN_LENGTH;
 
-type StatusTone = "info" | "success" | "warning";
+/** Fiche ouverte par-dessus la caméra (la lecture est suspendue tant qu’elle est affichée). */
+type ScanPanel =
+  | { kind: "lookup"; code: string | null }
+  | { kind: "count"; code: string; product: Product }
+  | {
+      kind: "error";
+      code: string | null;
+      title: string;
+      message: string;
+      hint?: string;
+    }
+  | { kind: "list" }
+  | { kind: "edit"; ean: string };
+
+type UndoToast = {
+  id: number;
+  ean: string;
+  title: string;
+  detail: string;
+  /** Quantité avant validation (`null` : le produit n’était pas encore compté). */
+  previousQuantity: number | null;
+};
+
+const findItem = (items: InventoryItem[], ean: string) =>
+  items.find((item) => item.product.ean === ean);
 
 export const ScanCameraPage = () => {
   const navigate = useNavigate();
@@ -56,48 +99,30 @@ export const ScanCameraPage = () => {
     sessionId,
     setSessionId,
   } = useInventory();
-  const [statusMessage, setStatusMessage] =
-    useState<{ text: string; tone: StatusTone } | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [highlightEan, setHighlightEan] = useState<string | null>(null);
-  const [pendingScan, setPendingScan] = useState<{
-    ean: string;
-    startedAt: number;
-  } | null>(null);
-  const [pendingScanElapsedMs, setPendingScanElapsedMs] = useState(0);
-  const highlightTimeoutRef = useRef<number | null>(null);
-  const statusTimeoutRef = useRef<number | null>(null);
-  const lockTimeoutRef = useRef<number | null>(null);
+  const [panel, setPanelState] = useState<ScanPanel | null>(null);
+  const [toast, setToast] = useState<UndoToast | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [photoDecoding, setPhotoDecoding] = useState(false);
+  const panelRef = useRef<ScanPanel | null>(null);
+  const itemsRef = useRef(items);
+  const toastSeqRef = useRef(0);
   const pendingScanControllerRef = useRef<AbortController | null>(null);
   const scanTokenRef = useRef(0);
-  const lockedEanRef = useRef<string | null>(null);
+  const codeLockRef = useRef<{ code: string; until: number } | null>(null);
   const resumeCameraOnVisibleRef = useRef(false);
   const lastVisibilityStateRef = useRef<string | null>(
     typeof document !== "undefined" ? document.visibilityState : null
   );
-  const scheduleMeasureRef = useRef<(() => void) | null>(null);
-  const pendingFocusEanRef = useRef<string | null>(null);
-  const [matchMediaLandscape, setMatchMediaLandscape] = useState<boolean>(
-    () => {
-      if (
-        typeof window === "undefined" ||
-        typeof window.matchMedia !== "function"
-      ) {
-        return false;
-      }
-      return window.matchMedia("(orientation: landscape)").matches;
-    }
-  );
-  const [viewportSize, setViewportSize] = useState<{
-    width: number;
-    height: number;
-  } | null>(null);
+  const [viewportHeight, setViewportHeight] = useState<number | null>(null);
+  const [isLandscape, setIsLandscape] = useState(false);
   const [torchState, setTorchState] = useState<TorchState>({
     supported: false,
     enabled: false,
   });
   const triggerScanDuplicateFeedback = useScanDuplicateFeedback();
   const triggerScanRejectionFeedback = useScanRejectionFeedback();
+  const successFeedback = useScanSuccessFeedback();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const torchControllerRef = useRef<TorchController | null>(null);
   // Les contraintes (1080p, mise au point continue, zoom) sont gérées par le hook.
@@ -114,177 +139,108 @@ export const ScanCameraPage = () => {
     canSwitchCamera,
     switchCamera,
   } = useCamera(videoRef, cameraOptions);
-  const [photoDecoding, setPhotoDecoding] = useState(false);
 
   const shopName = shop?.name ?? "Boutique";
+  const locationLabel = location?.label ?? "Zone inconnue";
   const ownerUserId = selectedUser?.id?.trim() ?? "";
   const locationId = location?.id?.trim() ?? "";
   const countTypeValue = typeof countType === "number" ? countType : null;
   const sessionRunId = typeof sessionId === "string" ? sessionId.trim() : "";
   const [hasCameraBooted, setHasCameraBooted] = useState(false);
-  const clearPendingScanState = useCallback(() => {
-    pendingScanControllerRef.current = null;
-    setPendingScan(null);
-    setPendingScanElapsedMs(0);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  /** Met à jour la fiche affichée ; la référence est lue par la caméra sans attendre le rendu. */
+  const setPanel = useCallback((next: ScanPanel | null) => {
+    panelRef.current = next;
+    setPanelState(next);
   }, []);
 
-  const showStatusMessage = useCallback(
-    (message: string | null, tone: StatusTone = "info") => {
-      if (!message) {
-        setStatusMessage(null);
-        return;
-      }
-      setStatusMessage({ text: message, tone });
-    },
-    []
-  );
+  const lockCode = useCallback((code: string | null) => {
+    codeLockRef.current = code
+      ? { code, until: Date.now() + SAME_CODE_COOLDOWN_MS }
+      : null;
+  }, []);
+
+  /** Vrai si ce code vient d’être traité ; prolonge le verrou tant que la caméra le voit. */
+  const isCodeLocked = useCallback((code: string) => {
+    const lock = codeLockRef.current;
+    if (!lock || lock.code !== code) {
+      return false;
+    }
+    const now = Date.now();
+    if (now >= lock.until) {
+      codeLockRef.current = null;
+      return false;
+    }
+    lock.until = now + SAME_CODE_COOLDOWN_MS;
+    return true;
+  }, []);
+
+  const abortPendingScan = useCallback(() => {
+    scanTokenRef.current += 1;
+    pendingScanControllerRef.current?.abort();
+    pendingScanControllerRef.current = null;
+  }, []);
 
   useEffect(() => {
     return () => {
-      if (pendingScanControllerRef.current) {
-        scanTokenRef.current += 1;
-        pendingScanControllerRef.current.abort();
-        clearPendingScanState();
-      }
+      scanTokenRef.current += 1;
+      pendingScanControllerRef.current?.abort();
+      pendingScanControllerRef.current = null;
     };
-  }, [clearPendingScanState]);
-
-  useEffect(() => {
-    if (!pendingScan) {
-      setPendingScanElapsedMs((current) => (current === 0 ? current : 0));
-      return;
-    }
-    setPendingScanElapsedMs(Date.now() - pendingScan.startedAt);
-    const intervalId = window.setInterval(() => {
-      setPendingScanElapsedMs(Date.now() - pendingScan.startedAt);
-    }, 250);
-    return () => window.clearInterval(intervalId);
-  }, [pendingScan]);
-
-  const commitViewportSize = useCallback(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const visualViewport = window.visualViewport;
-    const nextWidth =
-      visualViewport?.width ??
-      window.innerWidth ??
-      document.documentElement?.clientWidth ??
-      0;
-    const nextHeight =
-      visualViewport?.height ??
-      window.innerHeight ??
-      document.documentElement?.clientHeight ??
-      0;
-
-    if (!nextWidth || !nextHeight) {
-      return;
-    }
-
-    const rounded = {
-      width: Math.round(nextWidth),
-      height: Math.round(nextHeight),
-    };
-
-    setViewportSize((previous) => {
-      if (!previous) {
-        return rounded;
-      }
-      if (
-        Math.abs(previous.width - rounded.width) <= 1 &&
-        Math.abs(previous.height - rounded.height) <= 1
-      ) {
-        return previous;
-      }
-      return rounded;
-    });
-
-    if (typeof window.matchMedia !== "function") {
-      setMatchMediaLandscape(rounded.width > rounded.height);
-    }
   }, []);
 
+  // Hauteur réelle de l’écran (barre d’adresse iOS comprise) et orientation.
   useEffect(() => {
-    if (typeof window === "undefined") {
+    if (typeof window === "undefined" || isTestEnv) {
       return;
     }
-    if (isTestEnv) {
-      return;
-    }
-
     let rafId = 0;
-    const schedule = () => {
+    const measure = () => {
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
       rafId = requestAnimationFrame(() => {
         rafId = 0;
-        commitViewportSize();
+        const viewport = window.visualViewport;
+        const width = viewport?.width ?? window.innerWidth;
+        const height = viewport?.height ?? window.innerHeight;
+        if (!width || !height) {
+          return;
+        }
+        const rounded = Math.round(height);
+        setViewportHeight((previous) =>
+          previous !== null && Math.abs(previous - rounded) <= 1
+            ? previous
+            : rounded
+        );
+        setIsLandscape(width > height);
       });
     };
-
-    scheduleMeasureRef.current = schedule;
-    schedule();
-    const delayed = window.setTimeout(schedule, 160);
-
-    window.addEventListener("resize", schedule);
-    window.addEventListener("orientationchange", schedule);
-    window.addEventListener("pageshow", schedule);
-    const visualViewport = window.visualViewport;
-    visualViewport?.addEventListener("resize", schedule);
-    visualViewport?.addEventListener("scroll", schedule);
-
+    measure();
+    const delayed = window.setTimeout(measure, 160);
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    window.addEventListener("pageshow", measure);
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", measure);
     return () => {
-      scheduleMeasureRef.current = null;
       if (rafId) {
         cancelAnimationFrame(rafId);
       }
       window.clearTimeout(delayed);
-      window.removeEventListener("resize", schedule);
-      window.removeEventListener("orientationchange", schedule);
-      window.removeEventListener("pageshow", schedule);
-      visualViewport?.removeEventListener("resize", schedule);
-      visualViewport?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+      window.removeEventListener("pageshow", measure);
+      viewport?.removeEventListener("resize", measure);
     };
-  }, [commitViewportSize]);
+  }, []);
 
   useEffect(() => {
-    if (
-      typeof window === "undefined" ||
-      typeof window.matchMedia !== "function"
-    ) {
-      return;
-    }
-    if (isTestEnv) {
-      return;
-    }
-    const query = window.matchMedia("(orientation: landscape)");
-    const handleChange = (event: MediaQueryListEvent) => {
-      setMatchMediaLandscape(event.matches);
-      commitViewportSize();
-    };
-    const handleLegacy = (event: MediaQueryListEvent) => {
-      handleChange(event);
-    };
-    setMatchMediaLandscape(query.matches);
-    commitViewportSize();
-    if (typeof query.addEventListener === "function") {
-      query.addEventListener("change", handleChange);
-      return () => {
-        query.removeEventListener("change", handleChange);
-      };
-    }
-    query.addListener(handleLegacy);
-    return () => {
-      query.removeListener(handleLegacy);
-    };
-  }, [commitViewportSize]);
-
-  useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    if (isTestEnv) {
+    if (typeof document === "undefined" || isTestEnv) {
       return;
     }
     const { body, documentElement } = document;
@@ -313,10 +269,7 @@ export const ScanCameraPage = () => {
   }, [cameraError]);
 
   useEffect(() => {
-    if (typeof document === "undefined") {
-      return;
-    }
-    if (isTestEnv) {
+    if (typeof document === "undefined" || isTestEnv) {
       return;
     }
     lastVisibilityStateRef.current = document.visibilityState;
@@ -330,25 +283,19 @@ export const ScanCameraPage = () => {
         // Toujours relancer la caméra ensuite : sur iOS elle peut ne pas être "active" au moment du hide
         resumeCameraOnVisibleRef.current = true;
         stopCamera();
-      } else {
-        if (resumeCameraOnVisibleRef.current) {
-          resumeCameraOnVisibleRef.current = false;
-          void startCamera();
-          requestAnimationFrame(() => scheduleMeasureRef.current?.());
-        }
+      } else if (resumeCameraOnVisibleRef.current) {
+        resumeCameraOnVisibleRef.current = false;
+        void startCamera();
       }
     };
     document.addEventListener("visibilitychange", handleVisibility);
     return () => {
       document.removeEventListener("visibilitychange", handleVisibility);
     };
-  }, [cameraActive, startCamera, stopCamera]);
+  }, [startCamera, stopCamera]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    if (isTestEnv) {
+    if (typeof window === "undefined" || isTestEnv) {
       return;
     }
     const handleLifecycle = () => {
@@ -363,85 +310,12 @@ export const ScanCameraPage = () => {
     };
   }, [stopCamera]);
 
-  const viewportHeight = viewportSize?.height ?? null;
-  const viewportWidth = viewportSize?.width ?? null;
-  const isLandscape = useMemo(() => {
-    if (viewportHeight !== null && viewportWidth !== null) {
-      if (viewportWidth === viewportHeight) {
-        return matchMediaLandscape;
-      }
-      return viewportWidth > viewportHeight;
-    }
-    return matchMediaLandscape;
-  }, [matchMediaLandscape, viewportHeight, viewportWidth]);
-
-  const cameraSectionPixels = useMemo(() => {
-    if (!viewportHeight) {
-      return null;
-    }
-    const minHeight = isLandscape ? 220 : 320;
-    const reserve = isLandscape ? 180 : 240;
-    const maxHeight = Math.max(viewportHeight - reserve, minHeight);
-    const target = Math.round(viewportHeight * (isLandscape ? 0.5 : 0.58));
-    return Math.min(Math.max(target, minHeight), maxHeight);
-  }, [isLandscape, viewportHeight]);
-
-  const viewportStyle = useMemo<CSSProperties | undefined>(() => {
-    if (!viewportHeight) {
-      return undefined;
-    }
-    return {
-      minHeight: viewportHeight,
-      height: viewportHeight,
+  useEffect(() => {
+    return () => {
+      resumeCameraOnVisibleRef.current = false;
+      stopCamera();
     };
-  }, [viewportHeight]);
-
-  const cameraSectionStyle = useMemo<CSSProperties>(() => {
-    if (!cameraSectionPixels) {
-      return {
-        minHeight: isLandscape ? "50vh" : "58vh",
-      };
-    }
-    return {
-      height: cameraSectionPixels,
-      minHeight: cameraSectionPixels,
-    };
-  }, [cameraSectionPixels, isLandscape]);
-
-  const bottomSectionPaddingStyle = useMemo<CSSProperties>(
-    () => ({
-      paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1.5rem)",
-    }),
-    []
-  );
-
-  const bottomSectionStyle = useMemo<CSSProperties>(() => {
-    if (!viewportHeight || !cameraSectionPixels) {
-      return bottomSectionPaddingStyle;
-    }
-    const minimum = isLandscape ? 200 : 260;
-    const available = Math.max(viewportHeight - cameraSectionPixels, minimum);
-    return {
-      ...bottomSectionPaddingStyle,
-      height: available,
-      minHeight: available,
-      maxHeight: available,
-    };
-  }, [
-    bottomSectionPaddingStyle,
-    cameraSectionPixels,
-    isLandscape,
-    viewportHeight,
-  ]);
-
-  const topOverlayStyle = useMemo<CSSProperties>(
-    () => ({
-      paddingTop: `calc(env(safe-area-inset-top, 0px) + ${
-        isLandscape ? 0.75 : 1.1
-      }rem)`,
-    }),
-    [isLandscape]
-  );
+  }, [stopCamera]);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -457,75 +331,40 @@ export const ScanCameraPage = () => {
     }
   }, [countTypeValue, locationId, navigate, selectedUser]);
 
+  // Le bandeau « Annuler » disparaît seul après quelques secondes.
   useEffect(() => {
-    return () => {
-      resumeCameraOnVisibleRef.current = false;
-      stopCamera();
-      if (highlightTimeoutRef.current) {
-        window.clearTimeout(highlightTimeoutRef.current);
-        highlightTimeoutRef.current = null;
-      }
-      if (statusTimeoutRef.current) {
-        window.clearTimeout(statusTimeoutRef.current);
-        statusTimeoutRef.current = null;
-      }
-      if (lockTimeoutRef.current) {
-        window.clearTimeout(lockTimeoutRef.current);
-        lockTimeoutRef.current = null;
-      }
-      lockedEanRef.current = null;
-    };
-  }, [stopCamera]);
-
-  useEffect(() => {
-    if (!highlightEan) {
+    if (!toast) {
       return;
     }
-    if (highlightTimeoutRef.current) {
-      window.clearTimeout(highlightTimeoutRef.current);
-    }
-    highlightTimeoutRef.current = window.setTimeout(() => {
-      setHighlightEan(null);
-      highlightTimeoutRef.current = null;
-    }, 700);
-  }, [highlightEan]);
+    const timeoutId = window.setTimeout(() => {
+      setToast((current) => (current?.id === toast.id ? null : current));
+    }, UNDO_TOAST_DURATION_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [toast]);
 
-  useEffect(() => {
-    const targetEan = pendingFocusEanRef.current;
-    if (!targetEan) {
-      return;
-    }
-    const quantityInput = document.querySelector<HTMLInputElement>(
-      `[data-ean="${targetEan}"] input[data-testid="quantity-input"]`
-    );
-    if (quantityInput) {
-      requestAnimationFrame(() => {
-        quantityInput.focus({ preventScroll: true });
-        quantityInput.select?.();
-      });
-    }
-    pendingFocusEanRef.current = null;
-  }, [items]);
+  const viewportStyle = useMemo<CSSProperties | undefined>(
+    () =>
+      viewportHeight
+        ? { minHeight: viewportHeight, height: viewportHeight }
+        : undefined,
+    [viewportHeight]
+  );
 
-  useEffect(() => {
-    if (!statusMessage) {
-      return;
-    }
-    if (statusTimeoutRef.current) {
-      window.clearTimeout(statusTimeoutRef.current);
-    }
-    statusTimeoutRef.current = window.setTimeout(() => {
-      showStatusMessage(null);
-      statusTimeoutRef.current = null;
-    }, 2200);
-  }, [showStatusMessage, statusMessage]);
+  const topOverlayStyle = useMemo<CSSProperties>(
+    () => ({
+      paddingTop: `calc(env(safe-area-inset-top, 0px) + ${
+        isLandscape ? 0.75 : 1.1
+      }rem)`,
+    }),
+    [isLandscape]
+  );
 
   const totalQuantity = useMemo(
     () => items.reduce((acc, item) => acc + item.quantity, 0),
     [items]
   );
 
-  const orderedItems = items;
+  const summary = `${items.length} réf. · ${formatPieces(totalQuantity)}`;
 
   const cameraErrorDescription = useMemo(
     () => (cameraError ? describeCameraError(cameraError) : null),
@@ -554,9 +393,6 @@ export const ScanCameraPage = () => {
   }, [countTypeValue, locationId, ownerUserId, shop?.id]);
 
   const ensureActiveRun = useCallback(async () => {
-    if (items.length > 0 && sessionRunId) {
-      return sessionRunId;
-    }
     if (sessionRunId) {
       return sessionRunId;
     }
@@ -576,7 +412,6 @@ export const ScanCameraPage = () => {
   }, [
     countTypeValue,
     ensureScanPrerequisites,
-    items.length,
     locationId,
     ownerUserId,
     sessionRunId,
@@ -584,229 +419,280 @@ export const ScanCameraPage = () => {
     shop,
   ]);
 
-  const addProductToSession = useCallback(
-    async (product: Product) => {
-      try {
-        await ensureActiveRun();
-      } catch (error) {
-        showStatusMessage(null);
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Impossible de démarrer le comptage."
-        );
-        return null;
-      }
-      const result = addOrIncrementItem(product);
-      if (result.status === 'existing') {
-        const normalizedEan = product.ean?.trim();
-        if (normalizedEan) {
-          pendingFocusEanRef.current = normalizedEan;
-        }
-        triggerScanDuplicateFeedback();
-      }
-      return result;
-    },
-    [addOrIncrementItem, ensureActiveRun, showStatusMessage, triggerScanDuplicateFeedback]
-  );
-
-  const armScanLock = useCallback(
-    (ean: string | null, delayMs: number = LOCK_RELEASE_DELAY) => {
-      if (lockTimeoutRef.current) {
-        window.clearTimeout(lockTimeoutRef.current);
-        lockTimeoutRef.current = null;
-      }
-      lockedEanRef.current = ean;
-      if (!ean) {
-        return;
-      }
-      lockTimeoutRef.current = window.setTimeout(() => {
-        lockedEanRef.current = null;
-        lockTimeoutRef.current = null;
-      }, Math.max(0, delayMs));
-    },
-    []
-  );
-
-  const refreshScanLock = useCallback(() => {
-    const current = lockedEanRef.current;
-    if (!current) {
-      return;
-    }
-    armScanLock(current);
-  }, [armScanLock]);
-
-  const handleProductScanOutcome = useCallback(
-    (product: Product, mutation: InventoryItemMutationResult) => {
-      if (mutation.status === "existing") {
-        showStatusMessage(`${product.name} déjà scanné précédemment`, "warning");
-      } else {
-        showStatusMessage(`${product.name} ajouté`, "success");
-      }
-      const normalizedEan = product.ean?.trim() ?? null;
-      if (normalizedEan) {
-        setHighlightEan(normalizedEan);
-      } else {
-        setHighlightEan(null);
-      }
-    },
-    [showStatusMessage]
-  );
-
-  const handleCancelPendingScan = useCallback(() => {
-    if (!pendingScanControllerRef.current) {
-      return;
-    }
-    scanTokenRef.current += 1;
-    pendingScanControllerRef.current.abort();
-    clearPendingScanState();
-    showStatusMessage(null);
-    setErrorMessage("Lecture annulée.");
-    armScanLock(null);
-  }, [armScanLock, clearPendingScanState, showStatusMessage]);
-
-  const handleDetected = useCallback(
+  /** Traite un code lu (caméra ou photo) : recherche du produit puis ouverture de la fiche. */
+  const processCode = useCallback(
     async (rawValue: string) => {
-      const sanitized = sanitizeScanValue(rawValue);
-      if (!sanitized) {
+      const code = sanitizeScanValue(rawValue);
+      if (!code || isCodeLocked(code)) {
         return;
       }
 
-      // Éviter les détections concurrentes pendant qu’un scan produit est en cours
-      if (pendingScanControllerRef.current) {
-        // Optionnel: petit feedback (bip/flash) pour signaler "patienter"
+      if (!isScanLengthValid(code)) {
+        lockCode(code);
         triggerScanRejectionFeedback();
-        return;
-      }
-
-      if (lockedEanRef.current && lockedEanRef.current === sanitized) {
-        refreshScanLock();
-        return;
-      }
-
-      if (!isScanLengthValid(sanitized)) {
-        setErrorMessage(
-          `Code ${sanitized} invalide : ${MAX_SCAN_LENGTH} caractères maximum.`
-        );
-        showStatusMessage(null);
-        armScanLock(sanitized);
+        setPanel({
+          kind: "error",
+          code,
+          title: "Code non reconnu",
+          message: `Code invalide : ${MAX_SCAN_LENGTH} caractères maximum.`,
+        });
         return;
       }
 
       try {
         ensureScanPrerequisites();
       } catch (error) {
-        setErrorMessage(
-          error instanceof Error
-            ? error.message
-            : "Impossible de lancer le scan."
-        );
-        showStatusMessage(null);
-        armScanLock(null);
+        setPanel({
+          kind: "error",
+          code,
+          title: "Lecture impossible",
+          message:
+            error instanceof Error
+              ? error.message
+              : "Impossible de lancer le scan.",
+        });
         return;
       }
 
-      const scanToken = scanTokenRef.current + 1;
-      scanTokenRef.current = scanToken;
-      pendingScanControllerRef.current?.abort();
-      const scanController = new AbortController();
-      pendingScanControllerRef.current = scanController;
-      setPendingScan({ ean: sanitized, startedAt: Date.now() });
-      armScanLock(sanitized, 200); // petit lock court pour éviter les doubles lectures instantanées
-      showStatusMessage(`Lecture de ${sanitized}.`);
-      setErrorMessage(null);
+      abortPendingScan();
+      const scanToken = scanTokenRef.current;
+      const controller = new AbortController();
+      pendingScanControllerRef.current = controller;
+      setToast(null);
+      setSubmitError(null);
+      setPanel({ kind: "lookup", code });
 
       try {
-        const product = await fetchProductByEan(sanitized, {
-          signal: scanController.signal,
+        const product = await fetchProductByEan(code, {
+          signal: controller.signal,
         });
         if (scanToken !== scanTokenRef.current) {
           return;
         }
-        const mutation = await addProductToSession(product);
-        if (scanToken !== scanTokenRef.current) {
-          return;
+        const alreadyCounted = findItem(itemsRef.current, product.ean);
+        if (alreadyCounted && alreadyCounted.quantity > 0) {
+          triggerScanDuplicateFeedback();
+        } else {
+          successFeedback.play();
         }
-        if (mutation) {
-          handleProductScanOutcome(product, mutation);
-          armScanLock(sanitized, LOCK_RELEASE_DELAY); // lock standard de 700 ms
-        }
+        setPanel({ kind: "count", code, product });
       } catch (error) {
         if (scanToken !== scanTokenRef.current) {
           return;
         }
         if (error instanceof AbortedRequestError) {
-          setErrorMessage(null);
-          showStatusMessage(null);
-        } else if (error instanceof RequestTimeoutError) {
-          setErrorMessage(
-            "Lecture du produit trop longue. Vérifiez la connexion et réessayez."
-          );
-          triggerScanRejectionFeedback();
-          showStatusMessage(null);
+          setPanel(null);
+          return;
+        }
+        triggerScanRejectionFeedback();
+        if (error instanceof RequestTimeoutError) {
+          setPanel({
+            kind: "error",
+            code,
+            title: "Lecture trop longue",
+            message:
+              "Lecture du produit trop longue. Vérifiez la connexion et réessayez.",
+          });
+        } else if ((error as HttpError)?.status === 404) {
+          setPanel({
+            kind: "error",
+            code,
+            title: "Code introuvable",
+            message:
+              "Ce code n’est pas dans la liste des produits à inventorier.",
+            hint: "Rien n’a été compté. Vérifiez l’étiquette puis rescannez.",
+          });
         } else {
-          const err = error as HttpError;
-          if (err?.status === 404) {
-            setErrorMessage(
-              `Code ${sanitized} introuvable dans la liste des produits à inventorier.`
-            );
-            triggerScanRejectionFeedback();
-          } else {
-            setErrorMessage("Échec de la récupération du produit. Réessayez.");
-          }
-          showStatusMessage(null);
+          setPanel({
+            kind: "error",
+            code,
+            title: "Lecture impossible",
+            message: "Échec de la récupération du produit. Réessayez.",
+          });
         }
       } finally {
         if (scanToken === scanTokenRef.current) {
-          clearPendingScanState();
+          pendingScanControllerRef.current = null;
         }
       }
     },
     [
-      addProductToSession,
-      armScanLock,
-      clearPendingScanState,
+      abortPendingScan,
       ensureScanPrerequisites,
-      handleProductScanOutcome,
-      refreshScanLock,
-      showStatusMessage,
+      isCodeLocked,
+      lockCode,
+      setPanel,
+      successFeedback,
+      triggerScanDuplicateFeedback,
       triggerScanRejectionFeedback,
     ]
   );
-  const handlePickImage = useCallback(
-    async (file: File) => {
-      if (photoDecoding) {
+
+  const handleCameraDetected = useCallback(
+    async (rawValue: string) => {
+      // Fiche ouverte : la lecture est suspendue, on ignore toute détection tardive.
+      if (panelRef.current) {
         return;
       }
+      await processCode(rawValue);
+    },
+    [processCode]
+  );
+
+  const handlePickImage = useCallback(
+    async (file: File) => {
+      if (photoDecoding || panelRef.current) {
+        return;
+      }
+      abortPendingScan();
+      const token = scanTokenRef.current;
       setPhotoDecoding(true);
-      setErrorMessage(null);
-      showStatusMessage("Analyse de la photo…");
+      setToast(null);
+      setPanel({ kind: "lookup", code: null });
       try {
         const value = await decodeBarcodeFromFile(file);
-        if (!value) {
-          showStatusMessage(null);
-          setErrorMessage(
-            "Aucun code-barres lisible sur la photo. Rapprochez-vous et réessayez."
-          );
-          triggerScanRejectionFeedback();
+        if (token !== scanTokenRef.current) {
           return;
         }
-        armScanLock(null);
-        await handleDetected(value);
+        if (!value) {
+          triggerScanRejectionFeedback();
+          setPanel({
+            kind: "error",
+            code: null,
+            title: "Photo illisible",
+            message:
+              "Aucun code-barres lisible sur la photo. Rapprochez-vous et réessayez.",
+          });
+          return;
+        }
+        // Photo prise volontairement : on accepte même un code tout juste traité.
+        lockCode(null);
+        await processCode(value);
       } catch {
-        showStatusMessage(null);
-        setErrorMessage("Lecture de la photo impossible. Réessayez.");
+        if (token === scanTokenRef.current) {
+          setPanel({
+            kind: "error",
+            code: null,
+            title: "Photo illisible",
+            message: "Lecture de la photo impossible. Réessayez.",
+          });
+        }
       } finally {
         setPhotoDecoding(false);
       }
     },
     [
-      armScanLock,
-      handleDetected,
+      abortPendingScan,
+      lockCode,
       photoDecoding,
-      showStatusMessage,
+      processCode,
+      setPanel,
       triggerScanRejectionFeedback,
     ]
+  );
+
+  /** Ferme la fiche courante et ignore un moment le code qu’elle concernait. */
+  const closePanelAndResume = useCallback(
+    (code: string | null) => {
+      if (code) {
+        lockCode(code);
+      }
+      setSubmitError(null);
+      setPanel(null);
+    },
+    [lockCode, setPanel]
+  );
+
+  const handleCancelLookup = useCallback(() => {
+    const current = panelRef.current;
+    abortPendingScan();
+    closePanelAndResume(current?.kind === "lookup" ? current.code : null);
+  }, [abortPendingScan, closePanelAndResume]);
+
+  const handleConfirmCount = useCallback(
+    async (quantity: number) => {
+      const current = panelRef.current;
+      if (!current || current.kind !== "count" || submitting) {
+        return;
+      }
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        await ensureActiveRun();
+      } catch (error) {
+        setSubmitError(
+          error instanceof Error && error.message
+            ? error.message
+            : "Impossible de démarrer le comptage. Réessayez."
+        );
+        return;
+      } finally {
+        setSubmitting(false);
+      }
+      if (panelRef.current !== current) {
+        return;
+      }
+      const { product, code } = current;
+      const previousQuantity =
+        findItem(itemsRef.current, product.ean)?.quantity ?? null;
+      addOrIncrementItem(product, { quantity });
+      const total = (previousQuantity ?? 0) + quantity;
+      const sku = product.sku?.trim();
+      toastSeqRef.current += 1;
+      setToast({
+        id: toastSeqRef.current,
+        ean: product.ean,
+        previousQuantity,
+        title: `+${quantity} · ${product.name}`,
+        detail: `${sku ? `${sku} · ` : ""}total dans la zone : ${total}`,
+      });
+      closePanelAndResume(code);
+    },
+    [addOrIncrementItem, closePanelAndResume, ensureActiveRun, submitting]
+  );
+
+  const handleUndo = useCallback(() => {
+    if (!toast) {
+      return;
+    }
+    if (toast.previousQuantity === null) {
+      removeItem(toast.ean);
+    } else {
+      setQuantity(toast.ean, toast.previousQuantity, { promote: false });
+    }
+    setToast(null);
+  }, [removeItem, setQuantity, toast]);
+
+  const handleOpenList = useCallback(() => {
+    setToast(null);
+    setPanel({ kind: "list" });
+  }, [setPanel]);
+
+  const handleCloseList = useCallback(() => {
+    setPanel(null);
+  }, [setPanel]);
+
+  const handleEditItem = useCallback(
+    (ean: string) => {
+      setPanel({ kind: "edit", ean });
+    },
+    [setPanel]
+  );
+
+  const handleConfirmEdit = useCallback(
+    (ean: string, quantity: number) => {
+      setQuantity(ean, quantity, { promote: false });
+      setPanel({ kind: "list" });
+    },
+    [setPanel, setQuantity]
+  );
+
+  const handleRemoveItem = useCallback(
+    (ean: string) => {
+      removeItem(ean);
+      setPanel({ kind: "list" });
+    },
+    [removeItem, setPanel]
   );
 
   const handleSwitchCamera = useCallback(() => {
@@ -815,17 +701,12 @@ export const ScanCameraPage = () => {
   }, [switchCamera]);
 
   const handleGoBack = useCallback(() => {
-    if (pendingScanControllerRef.current) {
-      scanTokenRef.current += 1;
-      pendingScanControllerRef.current.abort();
-      clearPendingScanState();
-      armScanLock(null);
-    }
+    abortPendingScan();
     void torchControllerRef.current?.set(false);
     resumeCameraOnVisibleRef.current = false;
     stopCamera();
     navigate("/inventory/session");
-  }, [armScanLock, clearPendingScanState, navigate, stopCamera]);
+  }, [abortPendingScan, navigate, stopCamera]);
 
   const handleTorchStateChange = useCallback((state: TorchState) => {
     setTorchState((current) => {
@@ -840,62 +721,99 @@ export const ScanCameraPage = () => {
   }, []);
 
   const handleTorchToggle = useCallback(() => {
-    const controller = torchControllerRef.current;
-    if (!controller) {
-      return;
-    }
-    void controller.toggle();
+    void torchControllerRef.current?.toggle();
   }, []);
 
-  const handleDec = useCallback(
-    (ean: string, quantity: number) => {
-      if (quantity <= 1) {
-        removeItem(ean);
-        return;
-      }
-      setQuantity(ean, quantity - 1, { promote: false });
-    },
-    [removeItem, setQuantity]
-  );
+  const editedItem =
+    panel?.kind === "edit" ? findItem(items, panel.ean) ?? null : null;
+  const countedQuantity =
+    panel?.kind === "count"
+      ? findItem(items, panel.product.ean)?.quantity ?? 0
+      : 0;
 
-  const handleInc = useCallback(
-    (ean: string, quantity: number) => {
-      setQuantity(ean, quantity + 1, { promote: false });
-    },
-    [setQuantity]
-  );
-
-  const handleSetQuantity = useCallback(
-    (ean: string, next: number | null) => {
-      if (next === null) {
-        return;
-      }
-      if (next <= 0) {
-        removeItem(ean);
-        return;
-      }
-      setQuantity(ean, next);
-    },
-    [removeItem, setQuantity]
-  );
+  let frameTone: ScanFrameTone = "idle";
+  if (panel?.kind === "lookup" && panel.code) {
+    frameTone = "success";
+  } else if (panel?.kind === "count") {
+    frameTone = countedQuantity > 0 ? "warning" : "success";
+  } else if (panel?.kind === "error") {
+    frameTone = "error";
+  }
 
   const torchButtonActionLabel = torchState.enabled
     ? "Eteindre la lampe"
     : "Allumer la lampe";
 
-  return (
+  let sheet: ReactNode = null;
+  if (panel?.kind === "lookup") {
+    sheet = <ScanLookupSheet code={panel.code} onCancel={handleCancelLookup} />;
+  } else if (panel?.kind === "count") {
+    sheet = (
+      <ScanCountSheet
+        key={`count-${panel.code}-${panel.product.ean}`}
+        mode="count"
+        product={panel.product}
+        currentQuantity={countedQuantity}
+        submitting={submitting}
+        error={submitError}
+        onConfirm={(quantity) => void handleConfirmCount(quantity)}
+        onCancel={() => closePanelAndResume(panel.code)}
+      />
+    );
+  } else if (panel?.kind === "error") {
+    sheet = (
+      <ScanErrorSheet
+        title={panel.title}
+        message={panel.message}
+        code={panel.code}
+        hint={panel.hint}
+        onRetry={() => closePanelAndResume(panel.code)}
+      />
+    );
+  } else if (panel?.kind === "edit" && editedItem) {
+    sheet = (
+      <ScanCountSheet
+        key={`edit-${editedItem.id}`}
+        mode="edit"
+        product={editedItem.product}
+        currentQuantity={editedItem.quantity}
+        onConfirm={(quantity) =>
+          handleConfirmEdit(editedItem.product.ean, quantity)
+        }
+        onCancel={handleOpenList}
+        onRemove={() => handleRemoveItem(editedItem.product.ean)}
+      />
+    );
+  } else if (panel?.kind === "list" || panel?.kind === "edit") {
+    sheet = (
+      <ScanItemsSheet
+        shopName={shopName}
+        locationLabel={locationLabel}
+        summary={summary}
+        items={items}
+        onEdit={handleEditItem}
+        onClose={handleCloseList}
+      />
+    );
+  }
+
+  // Plein écran, rendu directement dans <body> : la carte de l’assistant (flou d’arrière-plan)
+  // piégerait sinon les éléments fixes, et le bas de l’écran (barre, fiches) sortirait de l’écran
+  // du téléphone, le défilement étant bloqué pendant le scan.
+  // Sur iOS, le son n’est autorisé qu’après un geste : chaque appui débloque le bip de lecture.
+  return createPortal(
     <div
-      className="scan-camera-screen relative flex min-h-dvh h-dvh flex-col overflow-hidden bg-black text-white"
+      className="scan-camera-screen fixed inset-0 z-30 flex h-dvh flex-col overflow-hidden bg-black text-white"
       data-testid="scan-camera-page"
       style={viewportStyle}
+      onClickCapture={successFeedback.unlock}
     >
-      <div
-        className="relative flex-none overflow-hidden"
-        style={cameraSectionStyle}
-      >
+      <div className="relative min-h-0 flex-1 overflow-hidden">
         <BarcodeScanner
           active={cameraActive}
-          onDetected={handleDetected}
+          paused={panel !== null || photoDecoding}
+          frameTone={frameTone}
+          onDetected={handleCameraDetected}
           onPickImage={handlePickImage}
           presentation="immersive"
           enableTorchToggle
@@ -905,12 +823,12 @@ export const ScanCameraPage = () => {
         />
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-28 bg-linear-to-b from-black/80 via-black/40 to-transparent" />
         <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between px-5 sm:px-8"
+          className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between px-4 sm:px-8"
           style={topOverlayStyle}
         >
           <button
             type="button"
-            className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/60 px-4 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            className="pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full bg-black/60 px-4 text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             onClick={handleGoBack}
             data-testid="scan-camera-back"
           >
@@ -923,7 +841,7 @@ export const ScanCameraPage = () => {
             {canSwitchCamera && (
               <button
                 type="button"
-                className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-60"
+                className="pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full bg-black/60 px-3.5 text-xs font-semibold text-white shadow-lg backdrop-blur transition hover:bg-black/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={handleSwitchCamera}
                 aria-label="Changer de caméra"
                 title="Changer de caméra"
@@ -934,30 +852,30 @@ export const ScanCameraPage = () => {
                 Caméra
               </button>
             )}
-          {torchState.supported && (
-            <button
-              type="button"
-              className={`pointer-events-auto inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold shadow-lg backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 ${
-                torchState.enabled
-                  ? "bg-amber-400/20 text-amber-100 hover:bg-amber-400/30 focus-visible:ring-amber-200"
-                  : "bg-black/60 text-white hover:bg-black/70 focus-visible:ring-white/70"
-              } disabled:cursor-not-allowed disabled:opacity-60`}
-              onClick={handleTorchToggle}
-              aria-pressed={torchState.enabled}
-              aria-label={torchButtonActionLabel}
-              title={torchButtonActionLabel}
-              disabled={!cameraActive}
-              data-testid="scan-camera-torch-toggle"
-            >
-              <span
-                aria-hidden
-                className={`h-2 w-2 rounded-full ${
-                  torchState.enabled ? "bg-amber-200" : "bg-white/70"
-                }`}
-              />
-              Lampe
-            </button>
-          )}
+            {torchState.supported && (
+              <button
+                type="button"
+                className={`pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full px-3.5 text-xs font-semibold shadow-lg backdrop-blur transition focus-visible:outline-none focus-visible:ring-2 ${
+                  torchState.enabled
+                    ? "bg-amber-400/20 text-amber-100 hover:bg-amber-400/30 focus-visible:ring-amber-200"
+                    : "bg-black/60 text-white hover:bg-black/70 focus-visible:ring-white/70"
+                } disabled:cursor-not-allowed disabled:opacity-60`}
+                onClick={handleTorchToggle}
+                aria-pressed={torchState.enabled}
+                aria-label={torchButtonActionLabel}
+                title={torchButtonActionLabel}
+                disabled={!cameraActive}
+                data-testid="scan-camera-torch-toggle"
+              >
+                <span
+                  aria-hidden
+                  className={`h-2 w-2 rounded-full ${
+                    torchState.enabled ? "bg-amber-200" : "bg-white/70"
+                  }`}
+                />
+                Lampe
+              </button>
+            )}
           </div>
         </div>
         <div className="pointer-events-none absolute inset-x-0 bottom-6 z-20 flex justify-center px-6">
@@ -992,91 +910,61 @@ export const ScanCameraPage = () => {
             </div>
           </div>
         )}
+        {toast && !panel && (
+          <ScanUndoToast
+            title={toast.title}
+            detail={toast.detail}
+            onUndo={handleUndo}
+          />
+        )}
       </div>
+
       <div
-        className="flex min-h-0 flex-1 flex-col rounded-t-4xl bg-white text-slate-900 shadow-[0_-20px_48px_-32px_rgba(15,23,42,0.55)] transition-colors duration-300 dark:bg-slate-950 dark:text-white"
-        style={bottomSectionStyle}
-        data-testid="scan-sheet"
+        className="flex-none px-3 pt-3"
+        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.75rem)" }}
       >
-        <div className="flex items-center justify-between gap-4 px-6 pt-6">
-          <div className="min-w-0">
-            <p className="text-[11px] uppercase tracking-[0.28em] text-slate-400 dark:text-slate-500">
-              {shopName}
+        <div
+          className="mx-auto flex h-[68px] max-w-lg items-center gap-3 rounded-[20px] bg-white pl-4 pr-2.5 text-slate-900 shadow-lg dark:bg-slate-900 dark:text-white"
+          data-testid="scan-summary-bar"
+        >
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15px] font-semibold leading-tight">
+              {locationLabel}
             </p>
-            <p className="mt-2 truncate text-lg font-semibold leading-tight text-slate-900 dark:text-white">
-              {location?.label ?? "Zone inconnue"}
+            <p
+              className="truncate text-[13px] text-slate-600 dark:text-slate-300"
+              data-testid="scan-summary"
+            >
+              {summary}
             </p>
           </div>
-          <span className="shrink-0 rounded-full bg-slate-900/90 px-3 py-1 text-sm font-semibold text-white dark:bg-slate-700/80">
-            {totalQuantity} pièce{totalQuantity > 1 ? "s" : ""}
-          </span>
-        </div>
-        <div className="space-y-2 px-6 pt-3">
-          {pendingScan && (
-            <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-100">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <span>
-                  Lecture de {pendingScan.ean}…{" "}
-                  {Math.max(1, Math.round(pendingScanElapsedMs / 1000))} s
-                </span>
-                <button
-                  type="button"
-                  className="rounded-full border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-500/50 dark:text-amber-50 dark:hover:bg-amber-500/20"
-                  onClick={handleCancelPendingScan}
-                >
-                  Annuler
-                </button>
-              </div>
-            </div>
-          )}
-          {statusMessage && (
-            <div
-              className={`rounded-2xl px-3 py-2 text-xs font-semibold ${
-                statusMessage.tone === "warning"
-                  ? "bg-amber-50 text-amber-800 dark:bg-amber-500/10 dark:text-amber-100"
-                  : "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200"
-              }`}
-            >
-              {statusMessage.text}
-            </div>
-          )}
-          {errorMessage && (
-            <div className="rounded-2xl bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-600 dark:bg-rose-500/10 dark:text-rose-200">
-              {errorMessage}
-            </div>
-          )}
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 pb-10 pt-4">
-          {orderedItems.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              Scannez un article pour commencer le comptage.
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {orderedItems.map((item) => {
-                const ean = item.product.ean;
-                return (
-                  <ScannedRow
-                    key={item.id}
-                    id={item.id}
-                    ean={item.product.ean}
-                    label={item.product.name}
-                    sku={item.product.sku}
-                    subGroup={item.product.subGroup}
-                    qty={item.quantity}
-                    highlight={highlightEan === item.product.ean}
-                    hasConflict={Boolean(item.hasConflict)}
-                    onInc={() => handleInc(ean, item.quantity)}
-                    onDec={() => handleDec(ean, item.quantity)}
-                    onSetQty={(value) => handleSetQuantity(ean, value)}
-                  />
-                );
-              })}
-            </ul>
-          )}
+          <button
+            type="button"
+            className="flex h-12 flex-none items-center gap-2 rounded-[14px] bg-brand-600 px-4 text-[15px] font-semibold text-white transition active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-300"
+            onClick={handleOpenList}
+            data-testid="scan-open-list"
+          >
+            <ListIcon />
+            Liste
+          </button>
         </div>
       </div>
-    </div>
+
+      {panel && (
+        <div
+          className="pointer-events-none fixed inset-x-0 z-[41] flex justify-center"
+          style={{ top: "calc(env(safe-area-inset-top, 0px) + 4.5rem)" }}
+          aria-hidden
+        >
+          <span className="flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1 text-[13px] font-semibold text-slate-200">
+            <span className="block h-2 w-2 rounded-full bg-amber-400" />
+            Lecture en pause
+          </span>
+        </div>
+      )}
+      {sheet}
+    </div>,
+    document.body
   );
 };
 

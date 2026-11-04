@@ -282,8 +282,14 @@ test.describe('Scanner avec BarcodeDetector', () => {
     await expect(page).toHaveURL(/\/inventory\/scan-camera/, { timeout: 5000 })
     await expect(page.getByTestId('scan-camera-page')).toBeVisible({ timeout: 5000 })
 
-    await expect(page.getByText('Produit simulé ajouté')).toBeVisible({ timeout: 5000 })
-    await expect(page.getByText(`EAN ${simulatedEan}`, { exact: true })).toBeVisible({ timeout: 5000 })
+    const countSheet = page.getByTestId('scan-count-sheet')
+    await expect(countSheet).toBeVisible({ timeout: 5000 })
+    await expect(countSheet.getByRole('heading', { name: 'Produit simulé' })).toBeVisible()
+    await expect(countSheet.getByText(`EAN ${simulatedEan}`, { exact: true })).toBeVisible()
+    await countSheet.getByTestId('scan-sheet-confirm').click()
+    await expect(page.getByTestId('scan-undo-toast')).toContainText('+1 · Produit simulé', { timeout: 5000 })
+
+    await page.getByTestId('scan-open-list').click()
     await expect(page.getByRole('listitem').filter({ hasText: simulatedEan })).toBeVisible({ timeout: 5000 })
   })
 })

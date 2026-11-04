@@ -45,6 +45,22 @@ interface BarcodeScannerProps {
   camera?: ExternalCameraBinding
   /** Notifie le moteur retenu (natif ou WebAssembly), utile pour le diagnostic. */
   onEngineChange?: (engine: DetectorEngine) => void
+  /**
+   * Suspend la lecture sans couper la caméra ni la lampe (ex. : fiche de saisie ouverte).
+   * Le flux reste affiché et la mise au point est conservée pour la lecture suivante.
+   */
+  paused?: boolean
+  /** Couleur du cadre de visée : neutre, code lu, déjà compté, erreur. */
+  frameTone?: ScanFrameTone
+}
+
+export type ScanFrameTone = 'idle' | 'success' | 'warning' | 'error'
+
+const FRAME_TONE_CLASSES: Record<ScanFrameTone, string> = {
+  idle: 'border-brand-400/70',
+  success: 'border-emerald-400',
+  warning: 'border-amber-400',
+  error: 'border-rose-400',
 }
 
 /** Délai sans lecture avant de proposer de l’aide (et la photo de secours). */
@@ -103,6 +119,8 @@ export function BarcodeScanner({
   presentation = 'embedded',
   camera,
   onEngineChange,
+  paused = false,
+  frameTone = 'idle',
 }: BarcodeScannerProps) {
   const internalVideoRef = useRef<HTMLVideoElement | null>(null)
   const videoRef = camera?.videoRef ?? internalVideoRef
@@ -132,6 +150,7 @@ export function BarcodeScanner({
   const processingRef = useRef(false)
   const detectInFlightRef = useRef(false)
   const activeRef = useRef(false)
+  const pausedRef = useRef(paused)
   const loopSessionRef = useRef(0)
   const lastDetectAtRef = useRef(0)
   const lastFrameAtRef = useRef(0)
@@ -218,26 +237,27 @@ export function BarcodeScanner({
   const scheduleHelp = useCallback(() => {
     if (helpTimeoutRef.current) clearTimeout(helpTimeoutRef.current)
     helpTimeoutRef.current = window.setTimeout(() => {
+      if (pausedRef.current) return
       setShowHelp(true)
       setStatus(STATUS_NO_DETECTION)
     }, HELP_TIMEOUT_MS)
   }, [])
 
   const handleDetectedValue = useCallback(async (value: string) => {
-    if (!value || processingRef.current) return
+    if (!value || processingRef.current || pausedRef.current) return
     lastFrameAtRef.current = performance.now()
     processingRef.current = true
     setShowHelp(false)
     setStatus('Code détecté, traitement en cours…')
     try {
       await Promise.resolve(onDetected(value))
-      setStatus(STATUS_AIM)
+      setStatus(pausedRef.current ? '' : STATUS_AIM)
     } catch {
       dispatchError('Traitement du code détecté impossible. Réessayez.')
     } finally {
       // Ne pas arrêter/redémarrer le pipeline ici : la boucle reste vivante.
       processingRef.current = false
-      if (activeRef.current) {
+      if (activeRef.current && !pausedRef.current) {
         scheduleHelp()
       }
     }
@@ -305,6 +325,7 @@ export function BarcodeScanner({
       const now = performance.now()
       lastFrameAtRef.current = now
       const shouldDetect =
+        !pausedRef.current &&
         !detectInFlightRef.current &&
         !processingRef.current &&
         now - lastDetectAtRef.current >= MIN_DETECT_INTERVAL_MS
@@ -339,6 +360,20 @@ export function BarcodeScanner({
       restartLoopRef.current?.()
     }, WATCHDOG_POLL_MS) as unknown as number
   }, [videoRef])
+
+  // Pause de la lecture : la boucle d’images continue (pas de faux « flux figé »), seule l’analyse s’arrête.
+  useEffect(() => {
+    pausedRef.current = paused
+    if (!activeRef.current || !detectorRef.current) return
+    if (paused) {
+      if (helpTimeoutRef.current) { clearTimeout(helpTimeoutRef.current); helpTimeoutRef.current = null }
+      setShowHelp(false)
+      setStatus('')
+    } else {
+      setStatus(STATUS_AIM)
+      scheduleHelp()
+    }
+  }, [paused, scheduleHelp])
 
   // Démarrage/arrêt de la détection
   useEffect(() => {
@@ -378,7 +413,11 @@ export function BarcodeScanner({
         lastDetectAtRef.current = 0
         startLoop()
         startWatchdog()
-        scheduleHelp()
+        if (pausedRef.current) {
+          setStatus('')
+        } else {
+          scheduleHelp()
+        }
       } catch {
         if (!cancelled) dispatchError('Initialisation du lecteur impossible.')
       }
@@ -432,9 +471,11 @@ export function BarcodeScanner({
           {!cameraUnavailable && (
             <div
               className={classNames(
-                'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-2xl border-4 border-brand-400/70',
+                'pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-2xl border-4 transition-colors duration-150',
+                FRAME_TONE_CLASSES[frameTone],
                 presentation === 'immersive' ? 'h-1/2 w-3/4 max-w-md' : 'h-32 w-64',
               )}
+              data-frame-tone={frameTone}
               aria-hidden
             />
           )}

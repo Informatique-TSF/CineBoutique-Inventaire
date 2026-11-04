@@ -266,4 +266,86 @@ describe('BarcodeScanner (pipeline unique)', () => {
     expect(detect.mock.calls.length).toBe(callsAtStop)
     expect(screen.queryByText('Visez le code‑barres')).not.toBeInTheDocument()
   })
+
+  it('suspend l’analyse en pause sans couper la lampe, puis reprend la lecture', async () => {
+    const detect = vi.fn(async () => [{ rawValue: '3017620422003' }])
+    detectorMocks.getBarcodeDetector.mockResolvedValue({ engine: 'native', detect })
+    const applyConstraints = vi.fn(async () => undefined)
+    const track = {
+      applyConstraints,
+      getCapabilities: () => ({ torch: true }),
+    } as unknown as MediaStreamTrack
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const onDetected = vi.fn(async () => undefined)
+    const onTorchStateChange = vi.fn()
+
+    const { rerender } = render(
+      <BarcodeScanner
+        active={false}
+        paused
+        onDetected={onDetected}
+        onTorchStateChange={onTorchStateChange}
+        presentation="immersive"
+        camera={{ videoRef, active: false }}
+      />,
+    )
+    ;(videoRef.current as unknown as { srcObject: unknown }).srcObject = new FakeMediaStream([track])
+    rerender(
+      <BarcodeScanner
+        active
+        paused
+        onDetected={onDetected}
+        onTorchStateChange={onTorchStateChange}
+        presentation="immersive"
+        camera={{ videoRef, active: true }}
+      />,
+    )
+
+    await waitFor(() => expect(onTorchStateChange).toHaveBeenCalledWith({ supported: true, enabled: false }))
+    await new Promise((resolve) => setTimeout(resolve, 150))
+    expect(detect).not.toHaveBeenCalled()
+    expect(onDetected).not.toHaveBeenCalled()
+    expect(screen.queryByText('Visez le code‑barres')).not.toBeInTheDocument()
+
+    rerender(
+      <BarcodeScanner
+        active
+        paused={false}
+        onDetected={onDetected}
+        onTorchStateChange={onTorchStateChange}
+        presentation="immersive"
+        camera={{ videoRef, active: true }}
+      />,
+    )
+
+    await waitFor(() => expect(onDetected).toHaveBeenCalledWith('3017620422003'))
+    // Une fois la lampe détectée, ni la pause ni la reprise ne l’ont signalée indisponible.
+    const states = onTorchStateChange.mock.calls.map(([state]) => state as { supported: boolean })
+    const firstSupported = states.findIndex((state) => state.supported)
+    expect(firstSupported).toBeGreaterThanOrEqual(0)
+    expect(states.slice(firstSupported).every((state) => state.supported)).toBe(true)
+  })
+
+  it('colore le cadre de visée selon le résultat de la lecture', () => {
+    createDetector([])
+    const videoRef: MutableRefObject<HTMLVideoElement | null> = { current: null }
+    const { container, rerender } = render(
+      <BarcodeScanner active onDetected={vi.fn()} presentation="immersive" camera={{ videoRef, active: true }} />,
+    )
+    const frame = () => container.querySelector('[data-frame-tone]')
+    expect(frame()).toHaveAttribute('data-frame-tone', 'idle')
+    expect(frame()).toHaveClass('border-brand-400/70')
+
+    rerender(
+      <BarcodeScanner
+        active
+        frameTone="warning"
+        onDetected={vi.fn()}
+        presentation="immersive"
+        camera={{ videoRef, active: true }}
+      />,
+    )
+    expect(frame()).toHaveAttribute('data-frame-tone', 'warning')
+    expect(frame()).toHaveClass('border-amber-400')
+  })
 })

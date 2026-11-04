@@ -27,6 +27,31 @@ const renderInventory = () =>
   })
 
 describe('InventoryContext', () => {
+  it('ajoute la quantité saisie, sans toucher à la quantité lors d’une simple relecture', () => {
+    const { result } = renderInventory()
+
+    act(() => {
+      result.current.setSelectedUser(createUser({ id: 'cccccccc-cccc-cccc-cccc-cccccccccccc' }))
+    })
+    act(() => {
+      result.current.addOrIncrementItem(sampleProduct, { quantity: 3 })
+    })
+    expect(result.current.items[0]?.quantity).toBe(3)
+
+    act(() => {
+      result.current.addOrIncrementItem(sampleProduct, { quantity: 2 })
+    })
+    expect(result.current.items).toHaveLength(1)
+    expect(result.current.items[0]?.quantity).toBe(5)
+    expect(result.current.logs[0]?.message).toContain('+2, quantité 5')
+
+    act(() => {
+      result.current.addOrIncrementItem(sampleProduct)
+      result.current.addOrIncrementItem(sampleProduct, { quantity: 0 })
+    })
+    expect(result.current.items[0]?.quantity).toBe(5)
+  })
+
   it('restores scanned items when switching users', () => {
     const { result } = renderInventory()
     const getInventory = () => result.current
