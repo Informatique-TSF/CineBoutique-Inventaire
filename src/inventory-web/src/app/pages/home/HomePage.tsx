@@ -932,12 +932,18 @@ export const HomePage = () => {
                 {reportError}
               </p>
             )}
-            <Button
-              className="w-full px-8 py-3 text-base sm:w-auto"
-              onClick={handleOpenResetModal}
-            >
-              Relancer un inventaire
-            </Button>
+            {isAdminUser ? (
+              <Button
+                className="w-full px-8 py-3 text-base sm:w-auto"
+                onClick={handleOpenResetModal}
+              >
+                Relancer un inventaire
+              </Button>
+            ) : (
+              <p className="text-sm text-emerald-700/90 dark:text-emerald-100/80">
+                Seul un administrateur peut relancer un inventaire.
+              </p>
+            )}
           </div>
         )}
         {!combinedLoading &&

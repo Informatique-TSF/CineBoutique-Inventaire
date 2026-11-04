@@ -671,6 +671,21 @@ describe('HomePage', () => {
     )
   })
 
+  it('réserve « Relancer un inventaire » aux administrateurs', async () => {
+    mockedFetchSummary.mockResolvedValue(summaryWith({ completedRuns: 2 }))
+    mockedFetchLocations.mockResolvedValue([completedZone('B01')])
+    mockedFetchLocationSummaries.mockResolvedValue([])
+
+    const { unmount } = renderHomePage()
+    expect(await screen.findByText(/Inventaire terminé/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Relancer un inventaire/ })).not.toBeInTheDocument()
+    expect(screen.getByText('Seul un administrateur peut relancer un inventaire.')).toBeInTheDocument()
+    unmount()
+
+    renderHomePage({ user: { ...defaultUser, isAdmin: true } })
+    expect(await screen.findByRole('button', { name: /Relancer un inventaire/ })).toBeInTheDocument()
+  })
+
   it('propose le récap pendant l’inventaire, mais pas encore le fichier d’import', async () => {
     const pendingZone: Location = { ...completedZone('B02'), countStatuses: [] }
     mockedFetchSummary.mockResolvedValue(summaryWith({}))

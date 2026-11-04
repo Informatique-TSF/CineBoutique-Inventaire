@@ -36,7 +36,9 @@ public sealed class InventoryApiFactory : WebApplicationFactory<Program>
                 ["APPLY_MIGRATIONS"] = "false",
                 ["DISABLE_MIGRATIONS"] = "false",
                 ["RunMigrationsOnStart"] = "false",
-                ["AppSettings:SeedOnStartup"] = "false"
+                ["AppSettings:SeedOnStartup"] = "false",
+                // L'opérateur par défaut des tests est fictif : le contrôle « admin réel » est activé par les tests dédiés.
+                ["Authorization:VerifyShopAdmin"] = "false"
             };
             configurationBuilder.AddInMemoryCollection(overrides!);
         });

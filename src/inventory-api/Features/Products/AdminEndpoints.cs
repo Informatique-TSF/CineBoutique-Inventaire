@@ -134,6 +134,7 @@ internal static class AdminEndpoints
                    return op;
                })
                .AddEndpointFilter<RequireOperatorHeadersFilter>()
+               .AddEndpointFilter<RequireShopAdminFilter>()
                .RequireAuthorization("Admin");
 
             app.MapPut("/api/products/{code}", updateBySku)
@@ -144,6 +145,7 @@ internal static class AdminEndpoints
                .Produces(StatusCodes.Status404NotFound)
                .Produces(StatusCodes.Status409Conflict)
                .AddEndpointFilter<RequireOperatorHeadersFilter>()
+               .AddEndpointFilter<RequireShopAdminFilter>()
                .RequireAuthorization("Admin");
 
             // --- MAJ par Id (GUID) ---
@@ -236,6 +238,7 @@ internal static class AdminEndpoints
                .Produces(StatusCodes.Status404NotFound)
                .Produces(StatusCodes.Status409Conflict)
                .AddEndpointFilter<RequireOperatorHeadersFilter>()
+               .AddEndpointFilter<RequireShopAdminFilter>()
                .RequireAuthorization("Admin");
 
             app.MapPut("/api/products/by-id/{id:guid}", updateById)
@@ -246,6 +249,7 @@ internal static class AdminEndpoints
                .Produces(StatusCodes.Status404NotFound)
                .Produces(StatusCodes.Status409Conflict)
                .AddEndpointFilter<RequireOperatorHeadersFilter>()
+               .AddEndpointFilter<RequireShopAdminFilter>()
                .RequireAuthorization("Admin");
         }
 
@@ -385,6 +389,7 @@ internal static class AdminEndpoints
                 return op;
             })
             .AddEndpointFilter<RequireOperatorHeadersFilter>()
+            .AddEndpointFilter<RequireShopAdminFilter>()
             .RequireAuthorization("Admin");
         }
 

@@ -8,6 +8,8 @@ using CineBoutique.Inventory.Api.Tests.Infra;
 using CineBoutique.Inventory.Infrastructure.Migrations;
 using FluentMigrator.Runner;
 using FluentMigrator.Runner.Processors;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -21,6 +23,7 @@ public sealed class InventoryApiFixture : IAsyncLifetime, IAsyncDisposable
 
     private PostgresContainerFixture? _postgres;
     private InventoryApiFactory? _factory;
+    private Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program>? _shopAdminVerifyingFactory;
     private NpgsqlDataSource? _dataSource;
     private string? _connectionString;
     private bool _initialized;
@@ -71,6 +74,12 @@ public sealed class InventoryApiFixture : IAsyncLifetime, IAsyncDisposable
     {
         if (!_initialized)
             return;
+
+        if (_shopAdminVerifyingFactory is not null)
+        {
+            await _shopAdminVerifyingFactory.DisposeAsync().ConfigureAwait(false);
+            _shopAdminVerifyingFactory = null;
+        }
 
         if (_factory is not null)
         {
@@ -153,6 +162,31 @@ public sealed class InventoryApiFixture : IAsyncLifetime, IAsyncDisposable
     }
 
     public HttpClient Client => CreateClient();
+
+    /// <summary>
+    /// Client sur une API où le contrôle « administrateur réel de la boutique » est actif, comme en production.
+    /// Les en-têtes d'opérateur par défaut (opérateur fictif) sont retirés : chaque test fournit les siens.
+    /// </summary>
+    public HttpClient CreateClientWithShopAdminVerification()
+    {
+        EnsureInitialized();
+
+        lock (_gate)
+        {
+            // Ajoutée après la configuration de la fabrique parente (qui met « false ») : c'est elle qui l'emporte.
+            _shopAdminVerifyingFactory ??= _factory!.WithWebHostBuilder(builder =>
+                builder.ConfigureAppConfiguration((_, configuration) =>
+                    configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                    {
+                        ["Authorization:VerifyShopAdmin"] = "true"
+                    })));
+        }
+
+        var client = _shopAdminVerifyingFactory.CreateClient();
+        client.DefaultRequestHeaders.Remove("X-Operator-Id");
+        client.DefaultRequestHeaders.Remove("X-Operator-Name");
+        return client;
+    }
 
     public void ClearAuditLogs()
     {
