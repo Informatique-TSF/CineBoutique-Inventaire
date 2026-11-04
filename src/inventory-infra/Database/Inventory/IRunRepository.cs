@@ -16,6 +16,4 @@ public interface IRunRepository
         Guid ownerUserId,
         Guid? sessionId,
         CancellationToken cancellationToken);
-
-    Task<IReadOnlyList<FinalizedZoneSummaryModel>> GetFinalizedZoneSummariesAsync(Guid shopId, CancellationToken cancellationToken);
 }

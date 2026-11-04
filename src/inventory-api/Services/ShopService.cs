@@ -20,13 +20,13 @@ public sealed class ShopService : IShopService
         await using var connection = await _connectionFactory.CreateOpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
         const string baseSql = """
-        SELECT "Id", "Name", "Kind"
+        SELECT "Id", "Name", "Kind", "OfficeCode"
         FROM "Shop"
         ORDER BY LOWER("Name");
         """;
 
         const string filteredSql = """
-        SELECT "Id", "Name", "Kind"
+        SELECT "Id", "Name", "Kind", "OfficeCode"
         FROM "Shop"
         WHERE lower("Kind") = lower(@Kind)
         ORDER BY LOWER("Name");
@@ -55,7 +55,7 @@ public sealed class ShopService : IShopService
             const string sql = """
             INSERT INTO "Shop" ("Name")
             VALUES (@Name)
-            RETURNING "Id", "Name", "Kind";
+            RETURNING "Id", "Name", "Kind", "OfficeCode";
             """;
 
             var created = await connection.QuerySingleAsync<ShopDto>(
@@ -80,15 +80,23 @@ public sealed class ShopService : IShopService
 
         try
         {
+            // OfficeCode absent de la requête : le code actuel est conservé. Chaîne vide : le code est effacé.
             const string sql = """
             UPDATE "Shop"
-            SET "Name" = @Name
+            SET "Name" = @Name,
+                "OfficeCode" = CASE WHEN @UpdateOfficeCode THEN @OfficeCode ELSE "OfficeCode" END
             WHERE "Id" = @Id
-            RETURNING "Id", "Name", "Kind";
+            RETURNING "Id", "Name", "Kind", "OfficeCode";
             """;
 
+            var updateOfficeCode = request.OfficeCode is not null;
+            var officeCode = NormalizeOfficeCode(request.OfficeCode);
+
             var updated = await connection.QuerySingleOrDefaultAsync<ShopDto>(
-                    new CommandDefinition(sql, new { request.Id, Name = trimmedName }, cancellationToken: cancellationToken))
+                    new CommandDefinition(
+                        sql,
+                        new { request.Id, Name = trimmedName, UpdateOfficeCode = updateOfficeCode, OfficeCode = officeCode },
+                        cancellationToken: cancellationToken))
                 .ConfigureAwait(false);
 
             if (updated is null)
@@ -104,6 +112,16 @@ public sealed class ShopService : IShopService
         }
     }
 
+    internal static string? NormalizeOfficeCode(string? officeCode)
+    {
+        if (string.IsNullOrWhiteSpace(officeCode))
+        {
+            return null;
+        }
+
+        return officeCode.Trim().ToUpperInvariant();
+    }
+
     public async Task<ShopDto> DeleteAsync(DeleteShopRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -114,7 +132,7 @@ public sealed class ShopService : IShopService
         try
         {
             const string selectSql = """
-            SELECT "Id", "Name", "Kind"
+            SELECT "Id", "Name", "Kind", "OfficeCode"
             FROM "Shop"
             WHERE "Id" = @Id
             FOR UPDATE;

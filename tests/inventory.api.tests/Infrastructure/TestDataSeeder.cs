@@ -54,6 +54,23 @@ public sealed class TestDataSeeder
         return id;
     }
 
+    public async Task SetShopOfficeCodeAsync(Guid shopId, string? officeCode)
+    {
+        await using var connection = await _dataSource.OpenConnectionAsync().ConfigureAwait(false);
+
+        const string sql = "UPDATE \"Shop\" SET \"OfficeCode\" = @officeCode WHERE \"Id\" = @id;";
+        await using var command = new NpgsqlCommand(sql, connection)
+        {
+            Parameters =
+            {
+                new("id", shopId),
+                new("officeCode", (object?)officeCode ?? DBNull.Value)
+            }
+        };
+
+        await command.ExecuteNonQueryAsync().ConfigureAwait(false);
+    }
+
     public async Task<Guid> CreateLocationAsync(Guid shopId, string code, string label)
     {
         if (shopId == Guid.Empty)

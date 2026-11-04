@@ -2,6 +2,7 @@ import type { Location } from "../types/inventory";
 
 import { API_BASE } from "@/lib/api/config";
 import http from "@/lib/api/http";
+import type { Shop } from "@/types/shop";
 import type { ShopUser } from "@/types/user";
 
 interface LocationPayload {
@@ -94,4 +95,18 @@ export const disableShopUser = async (
     body: { id },
   });
   return data as ShopUser;
+};
+
+type ShopUpdatePayload = {
+  id: string;
+  name: string;
+  officeCode: string;
+};
+
+export const updateShop = async (payload: ShopUpdatePayload): Promise<Shop> => {
+  const data = await http(`${API_BASE}/shops`, {
+    method: "PUT",
+    body: payload,
+  });
+  return data as Shop;
 };

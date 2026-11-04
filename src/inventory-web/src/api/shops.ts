@@ -10,6 +10,7 @@ const ShopSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   kind: ShopKindSchema,
+  officeCode: z.string().nullish(),
 })
 
 const ShopsSchema = z.array(ShopSchema)

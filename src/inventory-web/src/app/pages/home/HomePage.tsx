@@ -38,10 +38,18 @@ import { ModalPortal } from "@/app/components/Modal/ModalPortal";
 import { ProductsCountCard } from "@/components/products/ProductsCountCard";
 import { ProductsModal } from "@/components/products/ProductsModal";
 import { API_BASE } from "@/lib/api/config";
+import { downloadFile } from "@/lib/api/download";
 import type { HttpError } from "@/lib/api/http";
 import { formatResetInventorySummary } from "@/app/lib/resetSummary";
 import { useShop } from "@/state/ShopContext";
 import type { LocationSummary } from "@/types/summary";
+
+type ReportKind = "import" | "recap";
+
+const REPORT_FALLBACK_FILE_NAMES: Record<ReportKind, string> = {
+  import: "import-stock.csv",
+  recap: "recap-comptages.xlsx",
+};
 
 type AdminRedirectLocationState =
   | { adminAccessDenied?: boolean; from?: string | null }
@@ -634,12 +642,32 @@ export const HomePage = () => {
     }
   }, [canOpenCompletedRunsModal]);
 
-  const handleDownloadReport = useCallback((url: string | null) => {
-    if (!url) {
-      return;
-    }
-    window.open(url, "_blank", "noopener");
-  }, []);
+  const [downloadingReport, setDownloadingReport] = useState<ReportKind | null>(
+    null
+  );
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  const handleDownloadReport = useCallback(
+    async (kind: ReportKind, url: string | null) => {
+      if (!url) {
+        return;
+      }
+      setReportError(null);
+      setDownloadingReport(kind);
+      try {
+        await downloadFile(url, REPORT_FALLBACK_FILE_NAMES[kind]);
+      } catch (error) {
+        setReportError(
+          error instanceof Error && error.message
+            ? error.message
+            : "Le fichier n'a pas pu être téléchargé."
+        );
+      } finally {
+        setDownloadingReport(null);
+      }
+    },
+    []
+  );
 
   const handleOpenResetModal = useCallback(() => {
     setResetError(null);
@@ -772,21 +800,21 @@ export const HomePage = () => {
 
   const shopDisplayName = shop?.name?.trim();
   const currentYear = new Date().getFullYear();
-  const zonesReportUrl = useMemo(() => {
+  const stockImportUrl = useMemo(() => {
     if (!shopId) {
       return null;
     }
     return `${API_BASE}/shops/${encodeURIComponent(
       shopId
-    )}/reports/inventory/zones.csv`;
+    )}/reports/inventory/stock-import.csv`;
   }, [shopId]);
-  const skuReportUrl = useMemo(() => {
+  const countRecapUrl = useMemo(() => {
     if (!shopId) {
       return null;
     }
     return `${API_BASE}/shops/${encodeURIComponent(
       shopId
-    )}/reports/inventory/sku.csv`;
+    )}/reports/inventory/recap.xlsx`;
   }, [shopId]);
   const resetSummaryMessage = useMemo(
     () => formatResetInventorySummary(lastResetSummary),
@@ -878,20 +906,32 @@ export const HomePage = () => {
               <Button
                 variant="secondary"
                 fullWidth
-                onClick={() => handleDownloadReport(zonesReportUrl)}
-                disabled={!zonesReportUrl}
+                onClick={() => void handleDownloadReport("import", stockImportUrl)}
+                disabled={!stockImportUrl || downloadingReport !== null}
               >
-                Rapport par zones
+                {downloadingReport === "import"
+                  ? "Préparation…"
+                  : "Fichier d’import MCS (CSV)"}
               </Button>
               <Button
                 variant="secondary"
                 fullWidth
-                onClick={() => handleDownloadReport(skuReportUrl)}
-                disabled={!skuReportUrl}
+                onClick={() => void handleDownloadReport("recap", countRecapUrl)}
+                disabled={!countRecapUrl || downloadingReport !== null}
               >
-                Rapport par Code/SKU
+                {downloadingReport === "recap"
+                  ? "Préparation…"
+                  : "Récap des comptages (Excel)"}
               </Button>
             </div>
+            {reportError && (
+              <p
+                role="alert"
+                className="w-full rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-left text-sm text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100"
+              >
+                {reportError}
+              </p>
+            )}
             <Button
               className="w-full px-8 py-3 text-base sm:w-auto"
               onClick={handleOpenResetModal}
@@ -1087,6 +1127,49 @@ export const HomePage = () => {
                 )}
               </button>
             </div>
+          )}
+        {!combinedLoading &&
+          !errorDetails &&
+          !isInventoryComplete &&
+          displaySummary && (
+            <section
+              aria-label="Exports"
+              className="flex flex-col gap-3 rounded-3xl border border-(--cb-border-soft) bg-(--cb-surface-soft) p-5 shadow-panel-soft"
+            >
+              <div>
+                <p className="text-sm font-semibold uppercase text-(--cb-muted)">
+                  Exports
+                </p>
+                <p className="mt-1 text-sm text-(--cb-muted)">
+                  Le récap des comptages est disponible à tout moment. Le
+                  fichier d’import MCS le sera quand toutes les zones auront
+                  leurs comptages 1 et 2, sans écart ni comptage en cours.
+                </p>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  onClick={() => void handleDownloadReport("recap", countRecapUrl)}
+                  disabled={!countRecapUrl || downloadingReport !== null}
+                >
+                  {downloadingReport === "recap"
+                    ? "Préparation…"
+                    : "Récap des comptages (Excel)"}
+                </Button>
+                <Button variant="secondary" fullWidth disabled>
+                  Fichier d’import MCS : inventaire non terminé
+                </Button>
+              </div>
+              {reportError && (
+                <p
+                  role="alert"
+                  className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-100"
+                >
+                  {reportError}
+                </p>
+              )}
+            </section>
           )}
         {!combinedLoading && !errorDetails && !displaySummary && (
           <p className="text-sm text-(--cb-muted)">

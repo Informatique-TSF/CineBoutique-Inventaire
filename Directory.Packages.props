@@ -19,6 +19,7 @@
 
     <!-- Data -->
     <PackageVersion Include="AspNetCore.HealthChecks.NpgSql" Version="8.0.2" />
+    <PackageVersion Include="ClosedXML" Version="0.104.2" />
     <PackageVersion Include="CsvHelper" Version="30.0.1" />
     <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="Npgsql" Version="8.0.9" />
