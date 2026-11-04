@@ -23,6 +23,7 @@ import type {
 
 import { HomePage } from './HomePage'
 
+import { downloadFile } from '@/lib/api/download'
 import type { HttpError } from '@/lib/api/http'
 import { ShopProvider } from '@/state/ShopContext'
 import type { ShopUser } from '@/types/user'
@@ -45,6 +46,12 @@ vi.mock('../../api/inventoryApi', () => ({
   getConflictZoneDetail: vi.fn(),
   getCompletedRunDetail: vi.fn(),
 }))
+
+vi.mock('@/lib/api/download', () => ({
+  downloadFile: vi.fn(),
+}))
+
+const mockedDownloadFile = vi.mocked(downloadFile)
 
 const {
   fetchInventorySummary: mockedFetchSummary,
@@ -120,6 +127,7 @@ describe('HomePage', () => {
     mockedGetCompletedRunDetail.mockReset()
     mockedGetCompletedRunDetail.mockResolvedValue(emptyCompletedRunDetail)
     navigateMock.mockReset()
+    mockedDownloadFile.mockReset()
   })
 
   afterEach(() => {
@@ -599,4 +607,91 @@ describe('HomePage', () => {
     errorSpy.mockRestore()
   }
 })
+  const completedZone = (code: string): Location => ({
+    id: `loc-${code}`,
+    code,
+    label: `Zone ${code}`,
+    disabled: false,
+    isBusy: false,
+    busyBy: null,
+    activeRunId: null,
+    activeCountType: null,
+    activeStartedAtUtc: null,
+    countStatuses: [1, 2].map((countType) => ({
+      countType,
+      status: 'completed' as const,
+      runId: `run-${code}-${countType}`,
+      ownerDisplayName: 'Alice',
+      ownerUserId: defaultUser.id,
+      startedAtUtc: new Date('2026-12-17T08:00:00Z'),
+      completedAtUtc: new Date('2026-12-17T08:30:00Z'),
+    })),
+  })
+
+  const summaryWith = (overrides: Partial<InventorySummary>): InventorySummary => ({
+    activeSessions: 0,
+    openRuns: 0,
+    completedRuns: 0,
+    conflicts: 0,
+    lastActivityUtc: null,
+    openRunDetails: [],
+    completedRunDetails: [],
+    conflictZones: [],
+    ...overrides,
+  })
+
+  it('télécharge le fichier d’import MCS et affiche le refus de l’API', async () => {
+    mockedFetchSummary.mockResolvedValue(summaryWith({ completedRuns: 2 }))
+    mockedFetchLocations.mockResolvedValue([completedZone('B01')])
+    mockedFetchLocationSummaries.mockResolvedValue([])
+    mockedDownloadFile.mockRejectedValueOnce(
+      new Error('Le fichier d’import MCS sera disponible quand l’inventaire sera terminé.'),
+    )
+
+    renderHomePage()
+
+    expect(await screen.findByText(/Inventaire terminé/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Fichier d.import MCS \(CSV\)/ }))
+
+    await waitFor(() =>
+      expect(mockedDownloadFile).toHaveBeenCalledWith(
+        expect.stringMatching(/\/shops\/shop-1\/reports\/inventory\/stock-import\.csv$/),
+        'import-stock.csv',
+      ),
+    )
+    expect(await screen.findByRole('alert')).toHaveTextContent('sera disponible quand l’inventaire sera terminé')
+
+    mockedDownloadFile.mockResolvedValueOnce('recap.xlsx')
+    fireEvent.click(screen.getByRole('button', { name: /Récap des comptages \(Excel\)/ }))
+    await waitFor(() =>
+      expect(mockedDownloadFile).toHaveBeenLastCalledWith(
+        expect.stringMatching(/\/shops\/shop-1\/reports\/inventory\/recap\.xlsx$/),
+        'recap-comptages.xlsx',
+      ),
+    )
+  })
+
+  it('propose le récap pendant l’inventaire, mais pas encore le fichier d’import', async () => {
+    const pendingZone: Location = { ...completedZone('B02'), countStatuses: [] }
+    mockedFetchSummary.mockResolvedValue(summaryWith({}))
+    mockedFetchLocations.mockResolvedValue([pendingZone])
+    mockedFetchLocationSummaries.mockResolvedValue([])
+    mockedDownloadFile.mockResolvedValue('recap.xlsx')
+
+    renderHomePage()
+
+    const exports = await screen.findByRole('region', { name: 'Exports' })
+    expect(within(exports).getByRole('button', { name: /Fichier d.import MCS : inventaire non terminé/ })).toBeDisabled()
+
+    const recapButton = within(exports).getByRole('button', { name: /Récap des comptages \(Excel\)/ })
+    expect(recapButton).toBeEnabled()
+    fireEvent.click(recapButton)
+
+    await waitFor(() =>
+      expect(mockedDownloadFile).toHaveBeenCalledWith(
+        expect.stringMatching(/\/recap\.xlsx$/),
+        'recap-comptages.xlsx',
+      ),
+    )
+  })
 })

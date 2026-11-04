@@ -9,4 +9,9 @@ public sealed class UpdateShopRequest
 
     [Required]
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Code « office » MCS (ex. MTP). Absent : le code actuel est conservé. Chaîne vide : le code est effacé.
+    /// </summary>
+    public string? OfficeCode { get; set; }
 }

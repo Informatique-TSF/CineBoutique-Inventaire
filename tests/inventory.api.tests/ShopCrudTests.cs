@@ -77,6 +77,41 @@ public sealed class ShopCrudTests : IntegrationTestBase
     }
 
     [SkippableFact]
+    public async Task UpdateShop_ManagesTheMcsOfficeCode()
+    {
+        Skip.IfNot(TestEnvironment.IsIntegrationBackendAvailable(), "No Docker/Testcontainers and no TEST_DB_CONN provided.");
+
+        var shopId = Guid.Empty;
+        await Fixture.ResetAndSeedAsync(async seeder =>
+        {
+            shopId = await seeder.CreateShopAsync("Boutique Code Office").ConfigureAwait(false);
+        }).ConfigureAwait(false);
+
+        var client = CreateClient();
+        var uri = client.CreateRelativeUri("/api/shops");
+
+        // Saisi en minuscules : enregistré en majuscules.
+        var setResponse = await client.PutAsJsonAsync(uri, new UpdateShopRequest { Id = shopId, Name = "Boutique Code Office", OfficeCode = " mtp " }).ConfigureAwait(false);
+        setResponse.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await setResponse.Content.ReadFromJsonAsync<ShopDto>().ConfigureAwait(false))!.OfficeCode.Should().Be("MTP");
+
+        // Renommage sans le champ : le code est conservé.
+        var renameResponse = await client.PutAsJsonAsync(uri, new UpdateShopRequest { Id = shopId, Name = "Boutique Code Office 2" }).ConfigureAwait(false);
+        (await renameResponse.Content.ReadFromJsonAsync<ShopDto>().ConfigureAwait(false))!.OfficeCode.Should().Be("MTP");
+
+        var listed = await client.GetFromJsonAsync<ShopDto[]>(uri).ConfigureAwait(false);
+        listed!.Single(shop => shop.Id == shopId).OfficeCode.Should().Be("MTP");
+
+        // Caractère interdit : refusé.
+        var invalidResponse = await client.PutAsJsonAsync(uri, new UpdateShopRequest { Id = shopId, Name = "Boutique Code Office 2", OfficeCode = "M;P" }).ConfigureAwait(false);
+        invalidResponse.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+
+        // Chaîne vide : le code est effacé.
+        var clearResponse = await client.PutAsJsonAsync(uri, new UpdateShopRequest { Id = shopId, Name = "Boutique Code Office 2", OfficeCode = "" }).ConfigureAwait(false);
+        (await clearResponse.Content.ReadFromJsonAsync<ShopDto>().ConfigureAwait(false))!.OfficeCode.Should().BeNull();
+    }
+
+    [SkippableFact]
     public async Task GetShop_UnknownId_Returns404()
     {
         Skip.IfNot(TestEnvironment.IsIntegrationBackendAvailable(), "No Docker/Testcontainers and no TEST_DB_CONN provided.");

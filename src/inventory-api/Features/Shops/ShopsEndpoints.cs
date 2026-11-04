@@ -151,7 +151,9 @@ internal static class ShopsEndpoints
                                 clock,
                                 auditLogger,
                                 httpContext,
-                                $"a renommé la boutique {updated.Id} en '{updated.Name}'.",
+                                string.IsNullOrWhiteSpace(updated.OfficeCode)
+                                    ? $"a mis à jour la boutique {updated.Id} : nom '{updated.Name}', sans code office."
+                                    : $"a mis à jour la boutique {updated.Id} : nom '{updated.Name}', code office '{updated.OfficeCode}'.",
                                 "shops.update.success",
                                 cancellationToken)
                             .ConfigureAwait(false);

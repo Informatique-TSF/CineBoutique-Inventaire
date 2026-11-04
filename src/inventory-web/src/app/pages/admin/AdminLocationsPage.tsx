@@ -24,6 +24,8 @@ import { Input } from "../../components/ui/Input";
 import { useAsync } from "../../hooks/useAsync";
 import type { Location } from "../../types/inventory";
 
+import { ShopSettingsPanel } from "./ShopSettingsPanel";
+
 import {
   CSV_ENCODING_OPTIONS,
   decodeCsvBuffer,
@@ -37,7 +39,7 @@ import { useShop } from "@/state/ShopContext";
 import type { ShopUser } from "@/types/user";
 
 type FeedbackState = { type: "success" | "error"; message: string } | null;
-type AdminSection = "locations" | "users" | "catalog";
+type AdminSection = "locations" | "users" | "catalog" | "shop";
 
 const ADMIN_SECTIONS: {
   id: AdminSection;
@@ -61,6 +63,12 @@ const ADMIN_SECTIONS: {
     label: "Produits",
     description:
       "Importez un fichier CSV pour compléter le catalogue de la boutique.",
+  },
+  {
+    id: "shop",
+    label: "Boutique",
+    description:
+      "Renseignez le code office MCS utilisé par le fichier d’import de stock en fin d’inventaire.",
   },
 ];
 
@@ -2774,6 +2782,8 @@ export const AdminLocationsPage = () => {
           description={activeDefinition.description}
           isActive={activeSection === "users"}
         />
+      ) : activeSection === "shop" ? (
+        <ShopSettingsPanel description={activeDefinition.description} />
       ) : (
         <CatalogImportPanel
           description={activeDefinition.description}

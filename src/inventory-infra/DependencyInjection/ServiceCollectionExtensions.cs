@@ -55,6 +55,7 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IProductGroupRepository, ProductGroupRepository>();
         services.AddScoped<IProductSuggestionRepository, ProductSuggestionRepository>();
         services.AddScoped<IRunRepository, RunRepository>();
+        services.AddScoped<IInventoryExportRepository, InventoryExportRepository>();
         services.AddScoped<ISessionRepository, SessionRepository>();
         services.AddSingleton<IImportLockService, InMemoryImportLockService>();
 
