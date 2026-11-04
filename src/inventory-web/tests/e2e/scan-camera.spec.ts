@@ -335,35 +335,37 @@ test.describe('Mode scan caméra - liste des articles', () => {
 
     await page.waitForFunction(() => typeof window.__pushCameraScan === 'function')
 
-    const sheet = page.getByTestId('scan-sheet')
-    await expect(sheet).toBeVisible({ timeout: 5000 })
-    await expect(sheet.getByText('Scannez un article pour commencer le comptage.')).toBeVisible({ timeout: 5000 })
+    const summary = page.getByTestId('scan-summary')
+    await expect(summary).toHaveText('0 réf. · 0 pièce', { timeout: 5000 })
 
-    for (const product of scannedProducts) {
+    // Chaque lecture ouvre une fiche : la quantité est saisie puis validée avant de reprendre le scan.
+    for (const [index, product] of scannedProducts.entries()) {
       await page.evaluate((ean) => {
         window.__pushCameraScan?.(ean)
       }, product.ean)
 
-      await expect(sheet.getByText(product.name, { exact: true })).toBeVisible({ timeout: 5000 })
-      await expect(sheet.getByText(`EAN ${product.ean}`, { exact: true })).toBeVisible({ timeout: 5000 })
+      const countSheet = page.getByTestId('scan-count-sheet')
+      await expect(countSheet).toBeVisible({ timeout: 5000 })
+      await expect(countSheet.getByRole('heading', { name: product.name })).toBeVisible()
+      await expect(countSheet.getByText(`EAN ${product.ean}`, { exact: true })).toBeVisible()
+
+      const quantity = index === scannedProducts.length - 1 ? 5 : 1
+      if (quantity !== 1) {
+        await countSheet.getByRole('button', { name: `${quantity} pièces` }).click()
+      }
+      await countSheet.getByTestId('scan-sheet-confirm').click()
+      await expect(countSheet).toBeHidden({ timeout: 5000 })
+      await expect(page.getByTestId('scan-undo-toast')).toContainText(`+${quantity} · ${product.name}`)
     }
 
-    await expect(sheet.locator('[data-testid="scanned-row"]')).toHaveCount(scannedProducts.length)
-    await expect(sheet.getByText(`${scannedProducts.length} pièces`)).toBeVisible()
+    await expect(summary).toHaveText(`${scannedProducts.length} réf. · ${scannedProducts.length + 4} pièces`)
 
-    const lastProductName = scannedProducts.at(-1)?.name ?? ''
-    expect(lastProductName).not.toEqual('')
-
-    const quantityInput = page.getByRole('textbox', {
-      name: `Quantité pour ${lastProductName}`,
-    })
-    await quantityInput.scrollIntoViewIfNeeded()
-    await quantityInput.click()
-    await quantityInput.fill('5')
-    await quantityInput.press('Enter')
-    await expect(quantityInput).toHaveValue('5')
-    await expect(sheet.getByText(`${scannedProducts.length + 4} pièces`)).toBeVisible()
-    await quantityInput.blur()
+    await page.getByTestId('scan-open-list').click()
+    const list = page.getByTestId('scan-items-sheet')
+    await expect(list).toBeVisible({ timeout: 5000 })
+    await expect(list.locator('[data-testid="scanned-row"]')).toHaveCount(scannedProducts.length)
+    await list.getByRole('button', { name: 'Reprendre le scan' }).click()
+    await expect(list).toBeHidden({ timeout: 5000 })
   })
 })
 

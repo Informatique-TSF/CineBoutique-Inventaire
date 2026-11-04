@@ -345,3 +345,25 @@ body.inventory-duplicate-flash-active::before {
     opacity: 0;
   }
 }
+
+/* Fiches du scan caméra : montée depuis le bas de l'écran. */
+@keyframes scan-sheet-in {
+  from {
+    transform: translateY(24px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.scan-sheet-enter {
+  animation: scan-sheet-in 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-sheet-enter {
+    animation: none;
+  }
+}

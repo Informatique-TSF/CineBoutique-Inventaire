@@ -41,7 +41,14 @@ export interface InventoryContextValue {
   setCountType: (type: number | null) => void
   setLocation: (location: Location | null) => void
   setSessionId: (sessionId: string | null) => void
-  addOrIncrementItem: (product: Product, options?: { isManual?: boolean }) => InventoryItemMutationResult
+  /**
+   * Ajoute un produit à la session. Sans `quantity`, une relecture d’un produit déjà présent
+   * ne change pas sa quantité ; avec `quantity`, cette quantité est ajoutée (ou fixée pour un nouveau produit).
+   */
+  addOrIncrementItem: (
+    product: Product,
+    options?: { isManual?: boolean; quantity?: number },
+  ) => InventoryItemMutationResult
   initializeItems: (
     entries: Array<{ product: Product; quantity?: number; isManual?: boolean; hasConflict?: boolean }>,
   ) => void
@@ -353,8 +360,12 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
   }, [])
 
   const addOrIncrementItem = useCallback(
-    (product: Product, options?: { isManual?: boolean }): InventoryItemMutationResult => {
+    (product: Product, options?: { isManual?: boolean; quantity?: number }): InventoryItemMutationResult => {
       let mutationResult: InventoryItemMutationResult | null = null
+      const addedQuantity =
+        typeof options?.quantity === 'number' && Number.isFinite(options.quantity) && options.quantity > 0
+          ? Math.floor(options.quantity)
+          : null
       setState((prev) => {
         const existingIndex = prev.items.findIndex((item) => item.product.ean === product.ean)
         const timestamp = new Date().toISOString()
@@ -362,6 +373,7 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
           const existing = prev.items[existingIndex]
           const updated: InventoryItem = {
             ...existing,
+            quantity: addedQuantity === null ? existing.quantity : existing.quantity + addedQuantity,
             lastScanAt: timestamp,
             isManual: existing.isManual || Boolean(options?.isManual),
           }
@@ -373,7 +385,10 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
             pendingSnapshotUserId: null,
             logs: prependLogEntry(prev.logs, {
               type: 'item-rescanned',
-              message: `${updated.product.name} relu (EAN ${updated.product.ean})  quantité ${updated.quantity}`,
+              message:
+                addedQuantity === null
+                  ? `${updated.product.name} relu (EAN ${updated.product.ean})  quantité ${updated.quantity}`
+                  : `${updated.product.name} relu (EAN ${updated.product.ean}) : +${addedQuantity}, quantité ${updated.quantity}`,
               context: {
                 ean: updated.product.ean,
                 productName: updated.product.name,
@@ -386,7 +401,7 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
         const nextItem: InventoryItem = {
           id: createInventoryItemId(),
           product,
-          quantity: 1,
+          quantity: addedQuantity ?? 1,
           lastScanAt: timestamp,
           isManual: Boolean(options?.isManual),
           addedAt: Date.now(),
@@ -414,7 +429,7 @@ export const InventoryProvider = ({ children }: { children: ReactNode }) => {
           item: {
             id: createInventoryItemId(),
             product: { ...product },
-            quantity: 1,
+            quantity: addedQuantity ?? 1,
             lastScanAt: new Date().toISOString(),
             isManual: Boolean(options?.isManual),
             addedAt: Date.now(),
